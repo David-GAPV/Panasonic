@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>Upload Document</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f5f5;color:#333}
+header{background:#2D4285;padding:16px 40px;display:flex;align-items:center;justify-content:space-between}
+header img{height:32px}
+nav{background:#fff;border-bottom:1px solid #e0e0e0;padding:0 40px}
+nav a{display:inline-block;padding:16px 24px;color:#333;text-decoration:none;border-bottom:3px solid transparent;transition:all 0.3s}
+nav a:hover,nav a.active{color:#2D4285;border-bottom-color:#2D4285}
+.container{max-width:1400px;margin:32px auto;padding:0 40px}
+.card{background:#fff;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.1);margin-bottom:24px}
+.card-header{padding:20px 24px;border-bottom:1px solid #e0e0e0}
+.card-header h2{font-size:20px;font-weight:400;color:#333}
+.card-body{padding:24px}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:12px;background:#f9f9f9;font-weight:500;font-size:13px;color:#666;border-bottom:2px solid #e0e0e0}
+td{padding:12px;border-bottom:1px solid #f0f0f0;font-size:14px}
+a{color:#2D4285;text-decoration:none}
+a:hover{text-decoration:underline}
+.btn{display:inline-block;padding:12px 32px;background:#2D4285;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px;font-weight:500;transition:background 0.3s}
+.btn:hover{background:#1a2d5e}
+.btn:disabled{background:#999;cursor:not-allowed}
+input[type=file]{display:block;width:100%;padding:16px;border:2px dashed #ccc;border-radius:4px;margin:20px 0;cursor:pointer;background:#fafafa}
+input[type=file]:hover{border-color:#2D4285;background:#f0f7ff}
+.file-count{margin:8px 0;color:#2D4285;font-size:14px}
+.file-item{background:#fff;border:1px solid #e0e0e0;border-radius:4px;padding:16px 20px;margin-bottom:12px}
+.file-item .fname{font-weight:500;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.file-item .fsize{color:#999;font-size:12px}
+.progress-wrap{background:#e0e0e0;border-radius:8px;height:8px;overflow:hidden;margin:8px 0}
+.progress-bar{height:100%;border-radius:8px;transition:width 0.3s;width:0}
+.progress-bar.uploading{background:#2D4285}
+.progress-bar.processing{background:#f57c00;animation:pulse 1.2s infinite}
+.progress-bar.done{background:#4caf50}
+.progress-bar.error{background:#d32f2f}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.6}}
+.status-text{font-size:12px;color:#666;margin-top:4px}
+.status-text.error{color:#d32f2f}
+.status-text.done{color:#2e7d32}
+.result-fields{margin-top:12px}
+.result-fields table{font-size:13px}
+.result-fields th{padding:8px 12px;font-size:12px}
+.result-fields td{padding:8px 12px}
+.overall-bar{margin-bottom:24px}
+.overall-bar .progress-wrap{height:12px}
+.overall-bar .label{font-size:13px;color:#666;margin-bottom:6px;display:flex;justify-content:space-between}
+</style></head><body>
+<header>
+<img src="/static/images/Panasonic_whitetext.jpg" alt="Panasonic">
+<div style="color:#fff;font-size:18px;font-weight:300">IDP System</div>
+</header>
+<nav>
+<a href="/" >Dashboard</a>
+<a href="/review" >Review Queue</a>
+<a href="/upload" class="active">Upload</a>
+<a href="/sap/simulate" >SAP Integration</a>
+<a href="/api/status" target="_blank">Status</a>
+</nav>
+<div class="container" style="max-width:1000px">
+<div class="card"><div class="card-header"><h2>Upload Documents</h2></div><div class="card-body">
+<p style="color:#666;margin-bottom:20px">Supported: PDF, PNG, JPEG, TIFF, DOCX, HEIC, WebP | Max: 16 MB per file | Select multiple files for batch upload</p>
+<input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.docx,.heic,.heif,.webp" multiple>
+<div class="file-count" id="fileCount"></div>
+<button class="btn" id="submitBtn" disabled onclick="startUpload()">Upload & Extract</button>
+</div></div>
+<div id="overallWrap" style="display:none" class="overall-bar">
+<div class="label"><span id="overallLabel">Overall progress</span><span id="overallPct">0%</span></div>
+<div class="progress-wrap"><div class="progress-bar uploading" id="overallBar"></div></div>
+</div>
+<div id="fileList"></div>
+<div id="doneActions" style="display:none;margin-top:16px"><a href="/" class="btn">Back to Dashboard</a></div>
+</div>
+<script>
+var fileInput = document.getElementById('fileInput');
+var submitBtn = document.getElementById('submitBtn');
+var fileCountEl = document.getElementById('fileCount');
+
+fileInput.addEventListener('change', function() {
+  var n = this.files.length;
+  fileCountEl.textContent = n > 0 ? n + ' file' + (n > 1 ? 's' : '') + ' selected' : '';
+  submitBtn.textContent = n > 1 ? 'Upload & Extract (' + n + ' files)' : 'Upload & Extract';
+  submitBtn.disabled = n === 0;
+});
+
+var totalFiles = 0, doneFiles = 0;
+
+function updateOverall() {
+  var pct = totalFiles > 0 ? Math.round((doneFiles / totalFiles) * 100) : 0;
+  document.getElementById('overallBar').style.width = pct + '%';
+  document.getElementById('overallPct').textContent = pct + '%';
+  document.getElementById('overallLabel').textContent = doneFiles + ' / ' + totalFiles + ' files completed';
+  if (doneFiles === totalFiles) {
+    document.getElementById('overallBar').className = 'progress-bar done';
+    document.getElementById('doneActions').style.display = 'block';
+  }
+}
+
+function renderFields(fields) {
+  if (!fields || Object.keys(fields).length === 0) return '<p style="color:#999;font-size:13px">No fields extracted</p>';
+  var h = '<table><tr><th>Field</th><th>Value</th><th>Confidence</th></tr>';
+  for (var k in fields) {
+    var d = fields[k];
+    var name = k.replace(/_/g, ' ').replace(/\b\w/g, function(c){ return c.toUpperCase(); });
+    var val = typeof d === 'object' && d.value !== undefined ? (Array.isArray(d.value) ? d.value.join(', ') : d.value) : d;
+    var conf = typeof d === 'object' && d.confidence !== undefined ? d.confidence + '%' : '—';
+    h += '<tr><td>' + name + '</td><td>' + val + '</td><td>' + conf + '</td></tr>';
+  }
+  return h + '</table>';
+}
+
+function uploadFile(file, idx) {
+  var item = document.getElementById('file-' + idx);
+  var bar = document.getElementById('bar-' + idx);
+  var status = document.getElementById('status-' + idx);
+  var pctEl = document.getElementById('pct-' + idx);
+  var resultDiv = document.getElementById('result-' + idx);
+
+  return new Promise(function(resolve) {
+    var fd = new FormData();
+    fd.append('files', file);
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/upload', true);
+
+    // Upload progress (0-80%)
+    xhr.upload.onprogress = function(e) {
+      if (e.lengthComputable) {
+        var uploadPct = Math.round((e.loaded / e.total) * 80);
+        bar.style.width = uploadPct + '%';
+        pctEl.textContent = uploadPct + '%';
+        status.textContent = 'Uploading...';
+        status.className = 'status-text';
+      }
+    };
+
+    xhr.upload.onload = function() {
+      bar.style.width = '80%';
+      pctEl.textContent = '80%';
+      bar.className = 'progress-bar processing';
+      status.textContent = 'Processing OCR...';
+    };
+
+    xhr.onload = function() {
+      doneFiles++;
+      if (xhr.status === 200) {
+        try {
+          var resp = JSON.parse(xhr.responseText);
+          // Check if server returned HTML (error page) vs JSON
+          if (resp.error) {
+            bar.style.width = '100%';
+            bar.className = 'progress-bar error';
+            pctEl.textContent = '100%';
+            status.textContent = resp.error;
+            status.className = 'status-text error';
+          } else if (resp.result) {
+            bar.style.width = '100%';
+            bar.className = 'progress-bar done';
+            pctEl.textContent = '100%';
+            var r = resp.result;
+            var typeName = (r.document_type || 'unknown').replace(/_/g, ' ');
+            status.textContent = typeName.charAt(0).toUpperCase() + typeName.slice(1) + ' (' + (r.type_confidence || 0) + '% confidence)';
+            status.className = 'status-text done';
+            resultDiv.innerHTML = '<div class="result-fields">' + renderFields(r.fields) + '</div>';
+          } else {
+            bar.style.width = '100%';
+            bar.className = 'progress-bar done';
+            pctEl.textContent = '100%';
+            status.textContent = 'Completed';
+            status.className = 'status-text done';
+          }
+        } catch(e) {
+          bar.style.width = '100%';
+          bar.className = 'progress-bar error';
+          pctEl.textContent = '100%';
+          status.textContent = 'Invalid response from server';
+          status.className = 'status-text error';
+        }
+      } else {
+        bar.style.width = '100%';
+        bar.className = 'progress-bar error';
+        pctEl.textContent = '100%';
+        status.textContent = 'Server error (' + xhr.status + ')';
+        status.className = 'status-text error';
+      }
+      updateOverall();
+      resolve();
+    };
+
+    xhr.onerror = function() {
+      doneFiles++;
+      bar.style.width = '100%';
+      bar.className = 'progress-bar error';
+      pctEl.textContent = '100%';
+      status.textContent = 'Network error';
+      status.className = 'status-text error';
+      updateOverall();
+      resolve();
+    };
+
+    xhr.send(fd);
+  });
+}
+
+function startUpload() {
+  var files = fileInput.files;
+  if (!files.length) return;
+
+  submitBtn.disabled = true;
+  fileInput.disabled = true;
+  totalFiles = files.length;
+  doneFiles = 0;
+
+  document.getElementById('overallWrap').style.display = 'block';
+  document.getElementById('overallBar').style.width = '0%';
+  document.getElementById('overallBar').className = 'progress-bar uploading';
+  updateOverall();
+
+  var listHtml = '';
+  for (var i = 0; i < files.length; i++) {
+    var sz = files[i].size < 1024*1024 ? (files[i].size/1024).toFixed(1) + ' KB' : (files[i].size/1024/1024).toFixed(1) + ' MB';
+    listHtml += '<div class="file-item" id="file-' + i + '">' +
+      '<div class="fname"><span>' + files[i].name + ' <span class="fsize">(' + sz + ')</span></span><span id="pct-' + i + '">0%</span></div>' +
+      '<div class="progress-wrap"><div class="progress-bar uploading" id="bar-' + i + '"></div></div>' +
+      '<div class="status-text" id="status-' + i + '">Waiting...</div>' +
+      '<div id="result-' + i + '"></div></div>';
+  }
+  document.getElementById('fileList').innerHTML = listHtml;
+
+  // Upload sequentially to avoid overloading
+  var chain = Promise.resolve();
+  for (var j = 0; j < files.length; j++) {
+    (function(idx) {
+      chain = chain.then(function() { return uploadFile(files[idx], idx); });
+    })(j);
+  }
+}
+</script>
+</body></html>

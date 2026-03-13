@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>SAP Integration</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f5f5;color:#333}
+header{background:#2D4285;padding:16px 40px;display:flex;align-items:center;justify-content:space-between}
+header img{height:32px}
+nav{background:#fff;border-bottom:1px solid #e0e0e0;padding:0 40px}
+nav a{display:inline-block;padding:16px 24px;color:#333;text-decoration:none;border-bottom:3px solid transparent;transition:all 0.3s}
+nav a:hover,nav a.active{color:#2D4285;border-bottom-color:#2D4285}
+.container{max-width:1400px;margin:32px auto;padding:0 40px}
+.card{background:#fff;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.1);margin-bottom:24px}
+.card-header{padding:20px 24px;border-bottom:1px solid #e0e0e0}
+.card-header h2{font-size:20px;font-weight:400;color:#333}
+.card-body{padding:24px}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:10px 12px;background:#f9f9f9;font-weight:500;font-size:13px;color:#666;border-bottom:2px solid #e0e0e0}
+td{padding:10px 12px;border-bottom:1px solid #f0f0f0;font-size:14px}
+tr:hover td{background:#fafafa}
+a{color:#2D4285;text-decoration:none}
+a:hover{text-decoration:underline}
+.tabs{display:flex;border-bottom:2px solid #e0e0e0;margin-bottom:24px}
+.tab{padding:12px 24px;cursor:pointer;border-bottom:3px solid transparent;color:#666;font-size:14px;background:none;border-top:none;border-left:none;border-right:none}
+.tab.active{color:#2D4285;border-bottom-color:#2D4285;font-weight:500}
+.tab:hover{color:#2D4285}
+.tab-content{display:none}.tab-content.active{display:block}
+.badge{display:inline-block;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:500}
+.badge-success{background:#e8f5e9;color:#2e7d32}
+pre.json{background:#1e1e1e;color:#d4d4d4;padding:16px;border-radius:4px;overflow-x:auto;font-size:12px;line-height:1.5;max-height:400px;overflow-y:auto}
+pre.json .key{color:#9cdcfe}
+pre.json .str{color:#ce9178}
+pre.json .num{color:#b5cea8}
+.entry{border:1px solid #e0e0e0;border-radius:4px;padding:20px;margin-bottom:16px}
+.entry-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+.entry-header h3{font-weight:500;font-size:16px}
+.field-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px 24px}
+.field-grid .f{margin-bottom:4px}
+.field-grid .f .lbl{color:#888;font-size:11px;text-transform:uppercase;letter-spacing:0.5px}
+.field-grid .f .val{font-size:14px;margin-top:2px}
+.section-title{font-size:13px;font-weight:600;color:#2D4285;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 8px;padding-bottom:4px;border-bottom:1px solid #e8e8e8}
+</style></head><body>
+<header>
+<img src="/static/images/Panasonic_whitetext.jpg" alt="Panasonic">
+<div style="color:#fff;font-size:18px;font-weight:300">IDP System</div>
+</header>
+<nav>
+<a href="/" >Dashboard</a>
+<a href="/review" >Review Queue</a>
+<a href="/upload" >Upload</a>
+<a href="/sap/simulate" class="active">SAP Integration</a>
+<a href="/api/status" target="_blank">Status</a>
+</nav>
+<div class="container">
+<div class="tabs">
+<button class="tab active" onclick="showTab('push-log',this)">SAP Push Log</button>
+<button class="tab" onclick="showTab('sap-erp',this)">SAP ERP (MIRO)</button>
+<button class="tab" onclick="showTab('wms',this)">WMS (MIGO)</button>
+</div>
+<!-- TAB 1: Push Log -->
+<div class="tab-content active" id="tab-push-log">
+<div class="card"><div class="card-header"><h2>SAP Push Log ({{ sap_logs|length }})</h2></div><div class="card-body">
+{% if sap_logs %}
+<table><thead><tr><th>Time</th><th>Document</th><th>Type</th><th>Payload</th></tr></thead><tbody>
+{% for log in sap_logs %}<tr>
+<td style="white-space:nowrap">{{ log.logged_at.strftime('%d %b %Y %H:%M') if log.logged_at else '' }}</td>
+<td><a href="/document/{{ log.doc_id }}">{{ log.doc_id }}</a></td>
+<td>{{ log.doc_type|replace('_',' ')|title if log.doc_type else '' }}</td>
+<td><button class="tab" style="padding:4px 12px;font-size:12px" onclick="toggleJson(this,'{{ loop.index0 }}')">View JSON</button>
+<pre class="json" id="json-{{ loop.index0 }}" style="display:none;margin-top:8px"></pre>
+<script>document.getElementById('json-{{ loop.index0 }}').textContent={{ log.new_value|tojson }};</script></td>
+</tr>{% endfor %}</tbody></table>
+{% else %}<p style="text-align:center;color:#999;padding:40px">No SAP pushes yet. Approve documents from the Review Queue.</p>{% endif %}
+</div></div></div>
+
+<!-- TAB 2: SAP ERP MIRO (Invoice + Packing List) -->
+<div class="tab-content" id="tab-sap-erp">
+<div class="card"><div class="card-header"><h2>SAP MM - Invoice Verification (MIRO)</h2></div><div class="card-body">
+<p style="color:#666;margin-bottom:16px">Approved invoices and packing lists auto-fill these SAP entry fields.</p>
+{% if erp_entries %}
+{% for e in erp_entries %}
+<div class="entry">
+<div class="entry-header">
+<h3>{{ e.doc_id }} - {{ e.doc_type|replace('_',' ')|title }}</h3>
+<span class="badge badge-success">SAP Doc {{ e.sap_doc_no }}</span>
+</div>
+<div class="section-title">Document Info</div>
+<div class="field-grid">
+<div class="f"><div class="lbl">Invoice Number</div><div class="val">{{ e.fields.get('invoice_number','--') }}</div></div>
+<div class="f"><div class="lbl">Date</div><div class="val">{{ e.fields.get('date','--') }}</div></div>
+<div class="f"><div class="lbl">PO Number</div><div class="val">{{ e.fields.get('po_number','--') }}</div></div>
+<div class="f"><div class="lbl">B/L Number</div><div class="val">{{ e.fields.get('bl_number','--') }}</div></div>
+<div class="f"><div class="lbl">Packing List No.</div><div class="val">{{ e.fields.get('packing_list_no','--') }}</div></div>
+<div class="f"><div class="lbl">Currency</div><div class="val">{{ e.fields.get('currency','--') }}</div></div>
+</div>
+<div class="section-title">Parties</div>
+<div class="field-grid">
+<div class="f"><div class="lbl">Supplier / Seller</div><div class="val">{{ e.fields.get('supplier_name','--') }}</div></div>
+<div class="f"><div class="lbl">Buyer / Consignee</div><div class="val">{{ e.fields.get('buyer_name','--') }}</div></div>
+<div class="f"><div class="lbl">Tax Code (MST)</div><div class="val">{{ e.fields.get('tax_code','--') }}</div></div>
+</div>
+<div class="section-title">Amounts</div>
+<div class="field-grid">
+<div class="f"><div class="lbl">Total Amount (USD)</div><div class="val">{{ e.fields.get('total_amount','--') }}</div></div>
+<div class="f"><div class="lbl">Incoterms</div><div class="val">{{ e.fields.get('incoterms','--') }}</div></div>
+<div class="f"><div class="lbl">Payment Terms</div><div class="val">{{ e.fields.get('payment_terms','--') }}</div></div>
+</div>
+<div class="section-title">Shipping</div>
+<div class="field-grid">
+<div class="f"><div class="lbl">Vessel / Voyage</div><div class="val">{{ e.fields.get('vessel','--') }}</div></div>
+<div class="f"><div class="lbl">Container No.</div><div class="val">{{ e.fields.get('container_no','--') }}</div></div>
+<div class="f"><div class="lbl">Port of Loading</div><div class="val">{{ e.fields.get('port_of_loading','--') }}</div></div>
+<div class="f"><div class="lbl">Port of Discharge</div><div class="val">{{ e.fields.get('port_of_discharge','--') }}</div></div>
+<div class="f"><div class="lbl">Total Packages</div><div class="val">{{ e.fields.get('total_packages','--') }}</div></div>
+<div class="f"><div class="lbl">Gross Weight</div><div class="val">{{ e.fields.get('gross_weight','--') }}</div></div>
+<div class="f"><div class="lbl">Net Weight</div><div class="val">{{ e.fields.get('net_weight','--') }}</div></div>
+<div class="f"><div class="lbl">Measurement</div><div class="val">{{ e.fields.get('measurement','--') }}</div></div>
+<div class="f"><div class="lbl">HS Codes</div><div class="val">{{ e.fields.get('hs_codes','--') }}</div></div>
+</div>
+</div>
+{% endfor %}
+{% else %}<p style="text-align:center;color:#999;padding:40px">No invoice entries. Approve invoices or packing lists from Review Queue.</p>{% endif %}
+</div></div></div>
+<!-- TAB 3: WMS MIGO (Warehouse Receipt + Bill of Lading) -->
+<div class="tab-content" id="tab-wms">
+<div class="card"><div class="card-header"><h2>SAP MM - Goods Receipt (MIGO)</h2></div><div class="card-body">
+<p style="color:#666;margin-bottom:16px">Approved warehouse receipts and bills of lading auto-fill these WMS entry fields.</p>
+{% if wms_entries %}
+{% for w in wms_entries %}
+<div class="entry">
+<div class="entry-header">
+<h3>{{ w.doc_id }} - {{ w.doc_type|replace('_',' ')|title }}</h3>
+<span class="badge badge-success">Mat Doc {{ w.mat_doc_no }}</span>
+</div>
+<div class="section-title">Document Info</div>
+<div class="field-grid">
+<div class="f"><div class="lbl">B/L Number</div><div class="val">{{ w.fields.get('bl_number','--') }}</div></div>
+<div class="f"><div class="lbl">WH Receipt No.</div><div class="val">{{ w.fields.get('wh_receipt_no','--') }}</div></div>
+<div class="f"><div class="lbl">Date</div><div class="val">{{ w.fields.get('date','--') }}</div></div>
+<div class="f"><div class="lbl">Invoice Ref</div><div class="val">{{ w.fields.get('invoice_number','--') }}</div></div>
+<div class="f"><div class="lbl">PO Number</div><div class="val">{{ w.fields.get('po_number','--') }}</div></div>
+<div class="f"><div class="lbl">Booking Ref</div><div class="val">{{ w.fields.get('booking_ref','--') }}</div></div>
+</div>
+<div class="section-title">Parties</div>
+<div class="field-grid">
+<div class="f"><div class="lbl">Supplier / Shipper</div><div class="val">{{ w.fields.get('supplier_name','--') }}</div></div>
+<div class="f"><div class="lbl">Buyer / Consignee</div><div class="val">{{ w.fields.get('buyer_name','--') }}</div></div>
+<div class="f"><div class="lbl">Tax Code (MST)</div><div class="val">{{ w.fields.get('tax_code','--') }}</div></div>
+</div>
+<div class="section-title">Shipping & Logistics</div>
+<div class="field-grid">
+<div class="f"><div class="lbl">Vessel / Voyage</div><div class="val">{{ w.fields.get('vessel','--') }}</div></div>
+<div class="f"><div class="lbl">Container No.</div><div class="val">{{ w.fields.get('container_no','--') }}</div></div>
+<div class="f"><div class="lbl">Seal No.</div><div class="val">{{ w.fields.get('seal_no','--') }}</div></div>
+<div class="f"><div class="lbl">Port of Loading</div><div class="val">{{ w.fields.get('port_of_loading','--') }}</div></div>
+<div class="f"><div class="lbl">Port of Discharge</div><div class="val">{{ w.fields.get('port_of_discharge','--') }}</div></div>
+<div class="f"><div class="lbl">ETD</div><div class="val">{{ w.fields.get('etd','--') }}</div></div>
+<div class="f"><div class="lbl">ETA</div><div class="val">{{ w.fields.get('eta','--') }}</div></div>
+<div class="f"><div class="lbl">Customs Clearance</div><div class="val">{{ w.fields.get('customs_clearance','--') }}</div></div>
+<div class="f"><div class="lbl">Freight</div><div class="val">{{ w.fields.get('freight','--') }}</div></div>
+</div>
+<div class="section-title">Quantities & Weight</div>
+<div class="field-grid">
+<div class="f"><div class="lbl">Expected Qty</div><div class="val">{{ w.fields.get('expected_qty','--') }}</div></div>
+<div class="f"><div class="lbl">Received Qty</div><div class="val">{{ w.fields.get('received_qty','--') }}</div></div>
+<div class="f"><div class="lbl">Total Packages</div><div class="val">{{ w.fields.get('total_packages','--') }}</div></div>
+<div class="f"><div class="lbl">Gross Weight</div><div class="val">{{ w.fields.get('gross_weight','--') }}</div></div>
+<div class="f"><div class="lbl">Measurement</div><div class="val">{{ w.fields.get('measurement','--') }}</div></div>
+</div>
+</div>
+{% endfor %}
+{% else %}<p style="text-align:center;color:#999;padding:40px">No WMS entries. Approve warehouse receipts or bills of lading from Review Queue.</p>{% endif %}
+</div></div></div>
+
+</div>
+<script>
+function showTab(id,btn){
+  document.querySelectorAll('.tab-content').forEach(function(e){e.classList.remove('active')});
+  document.querySelectorAll('.tab').forEach(function(e){e.classList.remove('active')});
+  document.getElementById('tab-'+id).classList.add('active');
+  btn.classList.add('active');
+}
+function toggleJson(btn,idx){
+  var el=document.getElementById('json-'+idx);
+  if(el.style.display==='none'){
+    try{el.innerHTML=hl(JSON.stringify(JSON.parse(el.textContent),null,2))}catch(e){}
+    el.style.display='block';btn.textContent='Hide';
+  }else{el.style.display='none';btn.textContent='View JSON';}
+}
+function hl(j){
+  j=j.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return j.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,function(m){
+    var c='num';if(/^"/.test(m))c=/:$/.test(m)?'key':'str';return'<span class="'+c+'">'+m+'</span>';
+  });
+}
+</script>
+</body></html>
