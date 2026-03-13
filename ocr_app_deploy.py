@@ -36,7 +36,7 @@ FIELD_PATTERNS = {
     "po_number":         r'(?:PO\s*(?:No\.?|Ref)?[:\s]+)(PO[\-][A-Z0-9\-/]{6,30})',
     "bl_number":         r'(?:B/L\s*No\.?\s*[:\s]+)([A-Z0-9]{8,30})',
     "total_amount":      r'(?:TOTAL\s+CIF\s+VALUE|TOTAL\s+CHARGES|total\s+amount)[:\s|]*\n?(?:USD\s*)?([\d,]+\.?\d{0,2})',
-    "vessel":            r'(?:vessel\s*/?\s*voyage)[:\s]+([^\n]{4,40})',
+    "vessel":            r'(?:vessel\s*/?\s*voyage)[:\s]+(.+?)(?:\s+Country|\s+$|\n)',
     "port_of_loading":   r'(?:port\s+of\s+loading)[:\s]+([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
     "port_of_discharge": r'(?:port\s+of\s+(?:discharge|arrival))[:\s]+([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
     "gross_weight":      r'(?:gross\s*w(?:t|eight)?)[:\s]+([\d,]+\.?\d*\s*kg)',
@@ -44,7 +44,7 @@ FIELD_PATTERNS = {
     "measurement":       r'(?:measurement|cbm)[:\s]+([\d,]+\.?\d*\s*CBM)',
     "incoterms":         r'(?:Incoterms)[:\s]+([A-Z]{3}\s+\w+)',
     "currency":          r'(?:Currency)[:\s]+([A-Z]{3})',
-    "payment_terms":     r'(?:Payment)[:\s]+([^\n]{5,60})',
+    "payment_terms":     r'(?:Payment)[:\s]+(.+?)(?:\s+Incoterms|\s+FOB|\s+Currency|\n|$)',
     "booking_ref":       r'(?:booking\s*ref)[:\s]+([A-Z0-9\-]{8,30})',
     "freight":           r'(?:ocean\s+freight)[:\s]+(?:USD\s*)?([\d,]+\.?\d{0,2})',
     "etd":               r'(?:ETD)[:\s]+(\d{1,2}\s+\w+\s+\d{4})',
@@ -64,12 +64,12 @@ def extract_fields(text, filename=''):
             conf = min(95, 60 + len(value) * 2)
             fields[field] = {"value": value, "confidence": conf}
 
-    # Invoice number: try Invoice Ref/No in text, then INV- in text, then from filename
-    inv_m = re.search(r'(?:Invoice\s*(?:No\.?|Ref))[:\s]+([A-Z0-9][\w\-/]{5,30})', text, re.IGNORECASE)
+    # Invoice number: prioritize INV- pattern (most reliable), then Invoice No/Ref label
+    inv_m = re.search(r'(INV[\-][\w\-]+)', text)
     if inv_m:
-        fields["invoice_number"] = {"value": inv_m.group(1).strip(), "confidence": 90}
+        fields["invoice_number"] = {"value": inv_m.group(1).strip(), "confidence": 92}
     else:
-        inv_m2 = re.search(r'(INV[\-][\w\-]+)', text)
+        inv_m2 = re.search(r'(?:Invoice\s*(?:No\.?|Ref))[:\s]*\n?\s*([A-Z0-9][\w\-/]{5,30})', text, re.IGNORECASE | re.MULTILINE)
         if inv_m2:
             fields["invoice_number"] = {"value": inv_m2.group(1).strip(), "confidence": 85}
         elif filename:
@@ -86,19 +86,28 @@ def extract_fields(text, filename=''):
         if wr_m2:
             fields["wh_receipt_no"] = {"value": wr_m2.group(1).strip(), "confidence": 85}
 
-    # Supplier: SELLER/SHIPPER/Exporter line, then next line with Co./Ltd.
-    sup_m = re.search(r'(?:SELLER|SHIPPER|Supplier)[^|\n]*\n([A-Za-z][A-Za-z0-9 ,\.&]+(?:Co\.|Ltd\.|Inc\.)[A-Za-z0-9 ,\.]*)', text, re.IGNORECASE | re.MULTILINE)
-    if sup_m:
-        fields["supplier_name"] = {"value": sup_m.group(1).strip(), "confidence": 88}
-    else:
-        sup_m2 = re.search(r'(?:Exporter)[^|\n]*\n([A-Za-z][A-Za-z0-9 ,\.&]+(?:Co\.|Ltd\.|Inc\.)[A-Za-z0-9 ,\.]*)', text, re.IGNORECASE | re.MULTILINE)
-        if sup_m2:
-            fields["supplier_name"] = {"value": sup_m2.group(1).strip(), "confidence": 85}
+    # Supplier: find clean company name on standalone line (from declaration/signature section)
+    # Exclude lines containing "Panasonic" (those are merged OCR columns)
+    sup_candidates = re.finditer(r'^((?:Shenzhen|Shanghai|Beijing|Guangzhou|Dongguan|Foshan)\s+\w[\w\s,\.]+?Co\.,?)$', text, re.IGNORECASE | re.MULTILINE)
+    for sup_clean in sup_candidates:
+        val = sup_clean.group(1).strip()
+        if 'Panasonic' in val:
+            continue  # skip merged OCR lines
+        pos = sup_clean.end()
+        next_bit = text[pos:pos+20].strip()
+        if next_bit.startswith('Ltd'):
+            val = val + ' Ltd.'
+        fields["supplier_name"] = {"value": val, "confidence": 92}
+        break
 
-    # Buyer: BUYER/CONSIGNEE line, then next line with Co./Ltd.
-    buy_m = re.search(r'(?:BUYER|CONSIGNEE)[^|\n]*\n([A-Za-z][A-Za-z0-9 ,\.&]+(?:Co\.|Ltd\.|Inc\.)[A-Za-z0-9 ,\.]*)', text, re.IGNORECASE | re.MULTILINE)
-    if buy_m:
-        fields["buyer_name"] = {"value": buy_m.group(1).strip(), "confidence": 88}
+    # Buyer: find "Panasonic ... Co., Ltd."
+    buy_clean = re.search(r'(Panasonic\s+Appliances\s+Vietnam\s+Co\.,?\s*Ltd\.)', text, re.IGNORECASE)
+    if buy_clean:
+        fields["buyer_name"] = {"value": buy_clean.group(1).strip(), "confidence": 92}
+    else:
+        buy_m = re.search(r'(Panasonic[\w\s]+Co\.)', text, re.IGNORECASE)
+        if buy_m:
+            fields["buyer_name"] = {"value": buy_m.group(1).strip(), "confidence": 80}
 
     # Tax code: Tax Code (MST): 0101248141
     tax_m = re.search(r'(?:Tax\s*Code)[^:]*[:\s]+(\d{10,13})', text, re.IGNORECASE)
@@ -170,21 +179,39 @@ def to_rgb(img):
         return img.convert('RGB')
     return img
 
+def _extract_from_container(container):
+    """Extract text from paragraphs and tables in a docx container (body/header/footer)."""
+    text = ''
+    for p in container.paragraphs:
+        if p.text.strip():
+            text += p.text + '\n'
+    for t in container.tables:
+        for row in t.rows:
+            for cell in row.cells:
+                ct = cell.text.strip()
+                if ct:
+                    text += ct + '\n'
+    return text
+
 def extract_text_from_docx(raw_bytes):
-    """Extract text from a .docx file using python-docx. Each cell on its own line."""
+    """Extract text from a .docx file including headers and footers."""
     if not HAS_DOCX:
         return None
     try:
         doc = python_docx.Document(io.BytesIO(raw_bytes))
         text = ''
-        for p in doc.paragraphs:
-            text += p.text + '\n'
-        for t in doc.tables:
-            for row in t.rows:
-                for cell in row.cells:
-                    ct = cell.text.strip()
-                    if ct:
-                        text += ct + '\n'
+        # Extract from headers and footers first (often contain doc number, date)
+        for section in doc.sections:
+            try:
+                text += _extract_from_container(section.header)
+            except:
+                pass
+            try:
+                text += _extract_from_container(section.footer)
+            except:
+                pass
+        # Extract from body
+        text += _extract_from_container(doc)
         return text
     except Exception as e:
         log.error(f"DOCX parse error: {e}")

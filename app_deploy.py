@@ -56,6 +56,7 @@ def process_one_file(file):
                 VALUES (%s,%s,%s,%s,%s,'extracted',%s) ON CONFLICT (doc_id) DO UPDATE SET status='extracted', updated_at=NOW() RETURNING id""",
                 (doc_id, result.get("document_type","unknown"), result.get("type_confidence",0), file.filename, "web_user", s3_key))
             doc_db_id = cur.fetchone()[0]
+            cur.execute("DELETE FROM extracted_fields WHERE document_id=%s", (doc_db_id,))
             for fname, fdata in result.get("fields",{}).items():
                 val = str(fdata.get("value","")) if isinstance(fdata, dict) else str(fdata)
                 conf = fdata.get("confidence",0) if isinstance(fdata, dict) else 0
