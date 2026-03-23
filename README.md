@@ -2,243 +2,271 @@
 
 Intelligent Document Processing system for Panasonic Appliances Vietnam Co., Ltd.
 
-## 🚀 Quick Access
+## Live System
 
-**Dashboard**: http://18.142.225.22
+**URL**: https://idp.pngha.io.vn  
+**Status**: ✅ Operational (HTTPS, SSL via Let's Encrypt)
 
-**Status**: ✅ Live and operational
+## Overview
 
-## What This System Does
+Automates the processing of import/export trade documents — Commercial Invoices, Packing Lists, Bills of Lading, and Warehouse Receipts. Documents are uploaded, OCR-extracted, validated against business rules and master data, cross-verified within shipment groups, and routed through a human review workflow before SAP handoff.
 
-Automates the processing of import/export documents for Panasonic Vietnam:
-- **Commercial Invoices** - Financial declarations
-- **Packing Lists** - Itemized shipment contents
-- **Bills of Lading** - Shipping contracts
-- **Warehouse Receipts** - Goods received confirmations
+## Features
 
-### Key Features
-- OCR extraction with Tesseract (English + Vietnamese)
-- Cross-document validation
-- Automatic discrepancy detection
-- Human review workflow for flagged items
-- Complete audit trail (7-year retention)
+- OCR extraction via Tesseract 5.5.2 (English + Vietnamese) with direct DOCX parsing
+- Score-based document classification (invoice, packing list, B/L, warehouse receipt)
+- 20+ regex field extraction patterns with confidence scoring
+- Confidence threshold auto-flagging (< 70%)
+- Mandatory field validation per document type
+- Reference data validation against master tables (suppliers, HS codes, ports)
+- Cross-document verification within user-defined shipment groups (11 overlapping fields)
+- Auto-revalidation on field edit (mandatory + reference + cross-doc checks re-run live)
+- Human review workflow with side-by-side original document and extracted fields
+- Inline field editing with audit trail (old → new value logged, no page reload)
+- Approve / Reject actions with SNS email notifications
+- SAP MIRO/MIGO simulation with structured JSON payloads
+- Role-Based Access Control (admin, reviewer, uploader)
+- Analytics dashboard with error breakdown charts
+- PDF and CSV report generation
+- CSV/JSON export of document data
+- Search and filter across all documents
+- Upload time sorting (newest/oldest first)
+- Status-aware action buttons on dashboard
+- Full audit trail (7-year retention compliant)
+- Supported formats: PDF, PNG, JPEG, TIFF, DOCX, HEIC, WebP (max 16 MB)
 
-## Current Deployment
+## Architecture
 
-| Component | Details |
-|-----------|---------|
-| **Dashboard** | http://18.142.225.22 |
-| **OCR API** | http://13.215.178.213:8000 |
-| **Database** | PostgreSQL 16.13 on RDS |
-| **Storage** | S3 bucket with 4 sample documents |
-| **Region** | ap-southeast-1 (Singapore) |
-| **Profile** | pnsn |
-
-## Sample Data Loaded
-
-The system includes 4 realistic documents from a Shenzhen-to-Hanoi shipment:
-
-1. **Commercial Invoice** (INV-2025-PV-04872) - USD 59,935.00, 7 line items
-2. **Packing List** (PL-2025-PV-04872) - 312 cartons, 156,200 units
-3. **Bill of Lading** (OOLU8823041500) - OOCL vessel, container tracking
-4. **Warehouse Receipt** (WR-2025-TL-00612) - 20 units short (intentional discrepancy)
-
-## Getting Started
-
-### View the Dashboard
-```bash
-# Open in browser
-open http://18.142.225.22
-
-# Or check via curl
-curl http://18.142.225.22/api/status | jq .
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          AWS Cloud — ap-southeast-1                        │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │                    VPC: idp-panasonic-vpc (10.0.0.0/16)            │   │
+│  │                                                                     │   │
+│  │  ┌──────────────────────────────────────────────────────────────┐  │   │
+│  │  │              Public Subnet (10.0.1.0/24)                     │  │   │
+│  │  │                                                              │  │   │
+│  │  │  ┌─────────────────────┐    ┌─────────────────────────┐     │  │   │
+│  │  │  │  Web EC2 (t3.micro) │    │  OCR EC2 (t3.medium)    │     │  │   │
+│  │  │  │                     │    │                         │     │  │   │
+│  │  │  │  Nginx (443/80)     │    │  Flask API (:8000)      │     │  │   │
+│  │  │  │   ↓ reverse proxy   │    │  Tesseract 5.5.2        │     │  │   │
+│  │  │  │  Flask (:5000)      │───→│  python-docx            │     │  │   │
+│  │  │  │  (idp-web service)  │    │  pillow-heif, pdf2image │     │  │   │
+│  │  │  └─────────────────────┘    └─────────────────────────┘     │  │   │
+│  │  └──────────────────────────────────────────────────────────────┘  │   │
+│  │                                                                     │   │
+│  │  ┌──────────────────────────────────────────────────────────────┐  │   │
+│  │  │           Private Subnet (10.0.2.0/24)                      │  │   │
+│  │  │                                                              │  │   │
+│  │  │  ┌──────────────────────────────────────────────────────┐   │  │   │
+│  │  │  │         RDS PostgreSQL 16.13 (db.t3.micro)           │   │  │   │
+│  │  │  │         Database: idpdb                              │   │  │   │
+│  │  │  │         8 tables (documents, extracted_fields,       │   │  │   │
+│  │  │  │         validation_results, audit_log, doc_types,    │   │  │   │
+│  │  │  │         ref_suppliers, ref_hs_codes, ref_ports)      │   │  │   │
+│  │  │  └──────────────────────────────────────────────────────┘   │  │   │
+│  │  └──────────────────────────────────────────────────────────────┘  │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────────────┐   │
+│  │ S3 Bucket        │  │ SNS Topic        │  │ IAM Role               │   │
+│  │ Document storage │  │ Email alerts on  │  │ idp-panasonic-ec2-role │   │
+│  │ /uploads/ prefix │  │ flag/approve/    │  │ S3 + SNS + RDS access  │   │
+│  │ Versioning on    │  │ reject/mismatch  │  │                        │   │
+│  └──────────────────┘  └──────────────────┘  └────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ HTTPS (443)
+                              │ Domain: idp.pngha.io.vn
+                              │ SSL: Let's Encrypt (certbot)
+                              │
+                    ┌─────────┴─────────┐
+                    │   Users (Browser)  │
+                    │                    │
+                    │  Roles:            │
+                    │  admin / reviewer  │
+                    │  / uploader        │
+                    └────────────────────┘
 ```
 
-### Check OCR Status
-```bash
-# Health check (ready after ~8 minutes)
-curl http://13.215.178.213:8000/health
+## Role-Based Access Control
+
+| Feature | admin | reviewer | uploader |
+|---|:---:|:---:|:---:|
+| Dashboard (KPIs, doc list) | ✅ | ✅ | ✅ |
+| Upload documents | ✅ | ✅ | ✅ |
+| View document detail | ✅ | ✅ | ✅ (read-only) |
+| Download original | ✅ | ✅ | ✅ |
+| Review queue | ✅ | ✅ | ❌ |
+| Approve / Reject | ✅ | ✅ | ❌ |
+| Edit extracted fields | ✅ | ✅ | ❌ |
+| Analytics | ✅ | ✅ | ❌ |
+| Reports (PDF/CSV) | ✅ | ✅ | ❌ |
+| Export (CSV/JSON) | ✅ | ✅ | ❌ |
+| SAP Simulation | ✅ | ❌ | ❌ |
+
+## Validation Pipeline
+
+1. **Confidence threshold** — Fields below 70% confidence auto-flag the document
+2. **Mandatory field check** — Per document type (e.g. invoice requires invoice_number, date, total_amount, supplier_name)
+3. **Format validation** — Date formats, numeric amounts, invoice number patterns
+4. **Reference data validation** — Supplier name, HS codes, ports checked against master tables (ref_suppliers, ref_hs_codes, ref_ports)
+5. **Cross-document verification** — 11 overlapping fields compared within the same shipment_ref group (supplier_name, buyer_name, total_amount, container_no, vessel, ports, weights, packages, currency)
+
+All validations re-run automatically when a field is edited.
+
+## Data Flow
+
 ```
-
-### Access Database
-```bash
-PGPASSWORD="IDPPanasonic2025!" psql \
-  -h idp-panasonic-postgres.c9220g60mxx2.ap-southeast-1.rds.amazonaws.com \
-  -U idpadmin -d idpdb
+User uploads file(s) with Shipment Reference
+        │
+        ▼
+Web App → Save to S3 → POST to OCR API
+        │                    │
+        │         ┌──────────┘
+        │         ▼
+        │    OCR Server:
+        │      DOCX → python-docx extraction
+        │      PDF/Image → Tesseract (eng+vie, 300 DPI)
+        │      classify_document() → type + confidence
+        │      extract_fields() → 20+ fields
+        │         │
+        │    ◄────┘ JSON response
+        ▼
+Store in PostgreSQL → Run validation pipeline
+        │
+        ├─ All pass → status: extracted
+        └─ Any fail → status: flagged → SNS notification
+                │
+                ▼
+        Review Queue → Reviewer edits fields
+                │       (auto-revalidation on each edit)
+                ▼
+        Approve → SAP payload logged → SNS notification
+        Reject  → Reason logged → SNS notification
 ```
-
-## Documentation
-
-- **[QUICK_START.md](QUICK_START.md)** - How to use the dashboard
-- **[DEPLOYMENT_SUMMARY.md](DEPLOYMENT_SUMMARY.md)** - Complete infrastructure details
-- **[deploy/README.md](deploy/README.md)** - Deployment scripts documentation
 
 ## Project Structure
 
 ```
 .
-├── doc_input/                    # 4 sample DOCX documents
-│   ├── 01_Commercial_Invoice_INV-2025-PV-04872.docx
-│   ├── 02_Packing_List_PL-2025-PV-04872.docx
-│   ├── 03_Bill_of_Lading_OOLU8823041500.docx
-│   └── 04_Warehouse_Receipt_WR-2025-TL-00612.docx
-│
+├── app_deploy.py                 # Main Flask web application
+├── ocr_app_deploy.py             # OCR/extraction Flask API
+├── templates/                    # HTML templates
+│   ├── login.html
+│   ├── dashboard.html
+│   ├── upload.html
+│   ├── review_queue.html
+│   ├── document_detail.html
+│   ├── sap_simulation.html
+│   ├── analytics.html
+│   └── report.html
 ├── deploy/                       # AWS deployment scripts
-│   ├── deploy_all.sh            # Master orchestrator
-│   ├── 00_iam_role.sh           # IAM role for EC2
-│   ├── 01_network.sh            # VPC, security groups
-│   ├── 02_s3.sh                 # S3 bucket setup
-│   ├── 03_ocr_ec2.sh            # Tesseract OCR server
-│   ├── 04_rds.sh                # PostgreSQL database
-│   ├── 05_website_ec2.sh        # Flask dashboard
-│   ├── web-app-bootstrap.sh     # Website installer
-│   ├── teardown.sh              # Cleanup script
-│   └── .deploy-state            # Deployment state
-│
-├── README.md                     # This file
-├── QUICK_START.md               # User guide
-└── DEPLOYMENT_SUMMARY.md        # Infrastructure details
+│   ├── deploy_all.sh
+│   ├── 00_iam_role.sh
+│   ├── 01_network.sh
+│   ├── 02_s3.sh
+│   ├── 03_ocr_ec2.sh
+│   ├── 04_rds.sh
+│   ├── 05_website_ec2.sh
+│   ├── web-app-bootstrap.sh
+│   └── teardown.sh
+├── doc_input/                    # Sample DOCX documents (3 test sets)
+├── requirement/                  # BRD and architecture documents
+├── images/                       # Panasonic branding assets
+├── nginx-idp.conf                # Nginx reverse proxy config
+├── create_test_docs.py           # Test document generator
+├── create_architecture_doc.py    # Architecture DOCX generator
+└── generate_checklist_excel.py   # Requirements checklist generator
 ```
 
-## Architecture
+## Deployment
 
-```
-┌──────────────┐
-│   Browser    │
-└──────┬───────┘
-       │ HTTP
-       ▼
-┌──────────────────────────────────────────────────┐
-│  Flask Web Dashboard (EC2 t3.small)              │
-│  - Document list & stats                         │
-│  - Upload interface                              │
-│  - System status API                             │
-└──────┬───────────────────────┬───────────────────┘
-       │                       │
-       │ PostgreSQL            │ HTTP
-       ▼                       ▼
-┌──────────────────┐    ┌──────────────────┐
-│  RDS PostgreSQL  │    │  Tesseract OCR   │
-│  (db.t3.micro)   │    │  (EC2 t3.medium) │
-│                  │    │  - eng + vie     │
-│  5 tables:       │    │  - Flask API     │
-│  - documents     │    └──────────────────┘
-│  - fields        │
-│  - validations   │    ┌──────────────────┐
-│  - audit_log     │    │   S3 Bucket      │
-│  - doc_types     │    │  - Documents     │
-└──────────────────┘    │  - Config files  │
-                        └──────────────────┘
+Infrastructure is deployed via bash scripts in `deploy/` using AWS CLI with profile `pnsn`.
+
+```bash
+# Deploy everything
+cd deploy && ./deploy_all.sh
+
+# Teardown all resources
+cd deploy && ./deploy_all.sh --teardown
 ```
 
-## Key Technologies
+### Deploy pattern (updates)
 
-- **OCR**: Tesseract 5.x (compiled from source)
-- **Backend**: Python 3.9 + Flask
-- **Database**: PostgreSQL 16.13
-- **Storage**: AWS S3 with versioning
-- **Infrastructure**: AWS EC2, RDS, S3, IAM
-- **Region**: ap-southeast-1 (Singapore - closest to Vietnam)
+Web application:
+```bash
+scp -i deploy/idp-panasonic-key.pem app_deploy.py ec2-user@<WEB_IP>:/tmp/app.py
+ssh -i deploy/idp-panasonic-key.pem ec2-user@<WEB_IP> \
+  'sudo cp /tmp/app.py /opt/idp-web/app.py && sudo systemctl restart idp-web'
+```
+
+Templates:
+```bash
+scp -i deploy/idp-panasonic-key.pem templates/*.html ec2-user@<WEB_IP>:/tmp/
+ssh -i deploy/idp-panasonic-key.pem ec2-user@<WEB_IP> \
+  'sudo cp /tmp/*.html /opt/idp-web/templates/ && sudo systemctl restart idp-web'
+```
+
+OCR service:
+```bash
+scp -i deploy/idp-panasonic-key.pem ocr_app_deploy.py ec2-user@<OCR_IP>:/tmp/app.py
+ssh -i deploy/idp-panasonic-key.pem ec2-user@<OCR_IP> \
+  'sudo cp /tmp/app.py /opt/idp-ocr-api/app.py && sudo systemctl restart idp-ocr'
+```
 
 ## Cost Estimate
 
 | Resource | Type | Monthly Cost |
 |----------|------|--------------|
 | OCR EC2 | t3.medium | ~$38 |
-| Web EC2 | t3.small | ~$19 |
+| Web EC2 | t3.micro | ~$19 |
 | RDS | db.t3.micro | ~$15 |
 | S3 | First 50GB | ~$1 |
+| SNS | Email tier | ~$0 |
 | **Total** | | **~$73/month** |
 
-## Management Commands
+## Security
 
-### Redeploy Everything
-```bash
-cd deploy
-./deploy_all.sh
-```
+- HTTPS/TLS via Let's Encrypt (certbot auto-renewal)
+- Session-based authentication with SHA-256 password hashing
+- Role-based route protection (`@role_required` decorator)
+- S3 presigned URLs with 1-hour expiry for document access
+- RDS not publicly accessible (EC2 access only via security groups)
+- S3 public access blocked
+- IAM instance roles (no hardcoded AWS credentials)
+- AES-256 encryption at rest (S3 + RDS)
 
-### Destroy All Resources
-```bash
-cd deploy
-./deploy_all.sh --teardown
-```
+## Sample Data
 
-### Stop Instances (save cost)
-```bash
-AWS_PROFILE=pnsn aws ec2 stop-instances \
-  --instance-ids i-0f1f1440abb67375b i-029d0ca192bf5cad8
-```
+The system includes 12 sample DOCX documents across 3 shipment sets:
 
-### Start Instances
-```bash
-AWS_PROFILE=pnsn aws ec2 start-instances \
-  --instance-ids i-0f1f1440abb67375b i-029d0ca192bf5cad8
-```
+- **Original set** (4 docs) — Shenzhen-to-Hanoi shipment with intentional warehouse receipt discrepancy
+- **Test Set A** (4 docs) — Consistent data across all documents (should pass cross-verification)
+- **Test Set B** (4 docs) — Deliberate mismatches for testing cross-document verification
 
-## SSH Access
+## Documentation
 
-```bash
-# Website EC2
-ssh -i deploy/idp-panasonic-key.pem ec2-user@18.142.225.22
+- `ARCHITECTURE.md` — Detailed system architecture with diagrams
+- `REQUIREMENTS_CHECKLIST.md` — BRD requirements coverage
+- `REQUIREMENTS_CHECKLIST.xlsx` — Requirements tracking spreadsheet
+- `requirement/` — Original BRD and architecture description documents
+- `deploy/README.md` — Deployment scripts documentation
 
-# OCR EC2
-ssh -i deploy/idp-panasonic-key.pem ec2-user@13.215.178.213
-```
+## Tech Stack
 
-## Monitoring
-
-### Check Website Logs
-```bash
-ssh -i deploy/idp-panasonic-key.pem ec2-user@18.142.225.22 \
-  'sudo journalctl -u idp-web -f'
-```
-
-### Check OCR Bootstrap
-```bash
-ssh -i deploy/idp-panasonic-key.pem ec2-user@13.215.178.213 \
-  'tail -f /var/log/idp-bootstrap.log'
-```
-
-### Database Query
-```bash
-PGPASSWORD="IDPPanasonic2025!" psql \
-  -h idp-panasonic-postgres.c9220g60mxx2.ap-southeast-1.rds.amazonaws.com \
-  -U idpadmin -d idpdb \
-  -c "SELECT doc_id, status, type_confidence FROM documents ORDER BY created_at DESC;"
-```
-
-## Security Notes
-
-- All EC2 instances use security groups with minimal port exposure
-- RDS is not publicly accessible (EC2 access only)
-- S3 bucket has public access blocked
-- IAM roles follow least-privilege principle
-- Database password should be changed for production use
-
-## Support & Troubleshooting
-
-### Dashboard not loading?
-1. Check EC2 instance status
-2. Verify security group allows port 80
-3. Check service status: `sudo systemctl status idp-web`
-
-### OCR not responding?
-1. Wait 8-10 minutes after deployment for Tesseract compilation
-2. Check bootstrap log for errors
-3. Verify security group allows port 8000
-
-### Database connection issues?
-1. Verify RDS is in "available" state
-2. Check security group allows port 5432 from EC2
-3. Confirm credentials are correct
-
-## License & Credits
-
-Built for Panasonic Appliances Vietnam Co., Ltd.
-Team 07 - AWS ap-southeast-1 deployment
+- Python 3.9, Flask, Gunicorn
+- Nginx (reverse proxy + SSL termination)
+- Tesseract 5.5.2 (compiled from source, LSTM engine)
+- PostgreSQL 16.13 (RDS)
+- AWS: EC2, RDS, S3, SNS, IAM, VPC
+- Let's Encrypt / certbot
+- python-docx, pillow-heif, pdf2image, fpdf2, boto3, psycopg2
 
 ---
 
-**Last Updated**: March 13, 2026
-**Deployment Status**: ✅ Operational
+Built for Panasonic Appliances Vietnam Co., Ltd. — Team 07  
+Region: ap-southeast-1 (Singapore)  
+Last Updated: March 23, 2026
