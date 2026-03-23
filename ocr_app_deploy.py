@@ -67,6 +67,30 @@ def extract_fields(text, filename=''):
             conf = min(95, 60 + len(value) * 2)
             fields[field] = {"value": value, "confidence": conf}
 
+    # Packing list number fallback: standalone PL-XXXX pattern (OCR may lose the label in multi-column layouts)
+    if "packing_list_no" not in fields:
+        pl_fb = re.search(r'\b(PL[\-]\d{4}[\-][A-Z0-9\-]+)\b', text)
+        if pl_fb:
+            fields["packing_list_no"] = {"value": pl_fb.group(1).strip(), "confidence": 85}
+
+    # B/L number fallback: standalone B/L-like pattern (OCR may misread digits/letters)
+    if "bl_number" not in fields:
+        # Try common carrier prefixes with flexible digit matching
+        bl_fb = re.search(r'\b((?:MAEU|OOLU|HDMU|COSU|MSKU|CMAU|TCLU|MAEUS?)\d{7,12})\b', text)
+        if bl_fb:
+            fields["bl_number"] = {"value": bl_fb.group(1).strip(), "confidence": 80}
+        else:
+            # Generic: 4+ uppercase letters followed by 7+ digits
+            bl_fb2 = re.search(r'\b([A-Z]{4,5}\d{7,12})\b', text)
+            if bl_fb2:
+                fields["bl_number"] = {"value": bl_fb2.group(1).strip(), "confidence": 75}
+
+    # Date fallback: standalone date near top of document (OCR may lose "Date" label)
+    if "date" not in fields:
+        date_standalone = re.search(r'^(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})\s*$', text, re.IGNORECASE | re.MULTILINE)
+        if date_standalone:
+            fields["date"] = {"value": date_standalone.group(1).strip(), "confidence": 80}
+
     # Date fallback: table-style "Date of Issue\n18 March 2025" or "Date Received\n21 March 2025"
     if "date" not in fields:
         date_fb = re.search(r'(?:Date\s+(?:of\s+Issue|Received|Issued))\s*\n\s*(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})', text, re.IGNORECASE | re.MULTILINE)
@@ -81,31 +105,48 @@ def extract_fields(text, filename=''):
 
     # Gross weight fallback: standalone in table cell or after "Gross Weight" header
     if "gross_weight" not in fields:
-        gw_fb = re.search(r'Gross\s+Weight\s*\n\s*([\d,]+\.?\d*\s*kg)', text, re.IGNORECASE | re.MULTILINE)
+        gw_fb = re.search(r'Gross\s+W(?:t|eight|i)\s*[:\s]*\n?\s*([\d,]+\.?\d*\s*kg)', text, re.IGNORECASE | re.MULTILINE)
         if gw_fb:
             fields["gross_weight"] = {"value": gw_fb.group(1).strip(), "confidence": 80}
         else:
-            # Table layout: "Gross Weight" header in one cell, value in corresponding data cell
-            # Look for standalone weight value (digits + kg) that isn't already captured as net weight
+            # Look for weight values (digits + kg) in cargo/particulars section
             nw_val = fields.get("net_weight", {}).get("value", "")
-            gw_candidates = re.findall(r'^([\d,]+\.?\d*\s*kg)\s*$', text, re.IGNORECASE | re.MULTILINE)
+            gw_candidates = re.findall(r'([\d,]+\.?\d*\s*kg)', text, re.IGNORECASE)
+            # Pick the largest weight value as gross weight (if not already net weight)
+            best_gw = None
+            best_val = 0
             for cand in gw_candidates:
-                if cand.strip() != nw_val.strip() and 'Gross Weight' in text:
-                    fields["gross_weight"] = {"value": cand.strip(), "confidence": 75}
-                    break
+                if cand.strip() == nw_val.strip():
+                    continue
+                num_str = re.sub(r'[^\d.]', '', cand.replace(',', ''))
+                try:
+                    num = float(num_str)
+                    if num > best_val:
+                        best_val = num
+                        best_gw = cand.strip()
+                except:
+                    pass
+            if best_gw:
+                fields["gross_weight"] = {"value": best_gw, "confidence": 75}
 
     # Invoice number: prioritize INV- pattern (most reliable), then Invoice No/Ref label
-    inv_m = re.search(r'(INV[\-][\w\-]+)', text)
+    # Handle OCR artifacts: "INV-2025 V-3300" (space in VN), "INV-2025-VN-3300"
+    inv_m = re.search(r'(INV[\-]\d{4}[\-\s][A-Z]{1,4}[\-\s][\w\-]+)', text)
     if inv_m:
-        fields["invoice_number"] = {"value": inv_m.group(1).strip(), "confidence": 92}
+        val = re.sub(r'\s+', '-', inv_m.group(1).strip())  # normalize spaces to hyphens
+        fields["invoice_number"] = {"value": val, "confidence": 92}
     else:
-        inv_m2 = re.search(r'(?:Invoice\s*(?:No\.?|Ref\.?))[:\s]*\n?\s*([A-Z0-9][\w\-/]{5,30})', text, re.IGNORECASE | re.MULTILINE)
-        if inv_m2:
-            fields["invoice_number"] = {"value": inv_m2.group(1).strip(), "confidence": 85}
-        elif filename:
-            inv_m3 = re.search(r'(INV[\-][\w\-]+)', filename)
-            if inv_m3:
-                fields["invoice_number"] = {"value": inv_m3.group(1).strip(), "confidence": 75}
+        inv_m1b = re.search(r'(INV[\-][\w\-]+)', text)
+        if inv_m1b:
+            fields["invoice_number"] = {"value": inv_m1b.group(1).strip(), "confidence": 88}
+        else:
+            inv_m2 = re.search(r'(?:Invoice\s*(?:No\.?|Ref\.?))[:\s]*\n?\s*([A-Z0-9][\w\-/]{5,30})', text, re.IGNORECASE | re.MULTILINE)
+            if inv_m2:
+                fields["invoice_number"] = {"value": inv_m2.group(1).strip(), "confidence": 85}
+            elif filename:
+                inv_m3 = re.search(r'(INV[\-][\w\-]+)', filename)
+                if inv_m3:
+                    fields["invoice_number"] = {"value": inv_m3.group(1).strip(), "confidence": 75}
 
     # WH receipt number — handle both "WH Receipt No.: WR-..." and table-cell "WH Receipt No.\nWR-..."
     wr_m = re.search(r'(?:WH\s*Receipt\s*No\.?|WR[\-])[:\s]*\n?\s*(WR[\-][A-Z0-9\-]+)', text, re.IGNORECASE | re.MULTILINE)
@@ -116,22 +157,23 @@ def extract_fields(text, filename=''):
         if wr_m2:
             fields["wh_receipt_no"] = {"value": wr_m2.group(1).strip(), "confidence": 85}
 
-    # Supplier: find company name with city prefix + Co., Ltd.
-    sup_pat = r'^((?:Shenzhen|Shanghai|Beijing|Guangzhou|Dongguan|Foshan|Ningbo|Xiamen|Suzhou|Hangzhou)\s+\w[\w\s,\.]+?Co\.,?\s*Ltd\.?)'
+    # Supplier: find company name with city prefix + Co., Ltd. (handle OCR artifacts: Co.. Ltd, Co. Ltd, Co., Ltd)
+    sup_pat = r'^((?:Shenzhen|Shanghai|Beijing|Guangzhou|Dongguan|Foshan|Ningbo|Xiamen|Suzhou|Hangzhou)\s+\w[\w\s,\.]+?Co\.[\.,]?\s*Ltd\.?)'
     sup_candidates = re.finditer(sup_pat, text, re.IGNORECASE | re.MULTILINE)
     for sup_clean in sup_candidates:
         val = sup_clean.group(1).strip()
         if 'Panasonic' not in val:
-            val = re.sub(r'Co\.\s+Ltd', 'Co., Ltd', val)
+            # Normalize all variants: "Co.. Ltd", "Co. Ltd", "Co.,Ltd" → "Co., Ltd."
+            val = re.sub(r'Co\.[\.,]*\s*Ltd', 'Co., Ltd', val)
             fields["supplier_name"] = {"value": val, "confidence": 92}
             break
     # Fallback: Seller/Shipper/Supplier/Exporter label followed by company name on next line
     if "supplier_name" not in fields:
-        sup_label = re.search(r'(?:Seller|Shipper|Supplier|Exporter)[^:\n]*[:\s]*\n\s*(.+?Co\.,?\s*Ltd\.?)', text, re.IGNORECASE | re.MULTILINE)
+        sup_label = re.search(r'(?:Seller|Shipper|Supplier|Exporter)[^:\n]*[:\s]*\n\s*(.+?Co\.[\.,]?\s*Ltd\.?)', text, re.IGNORECASE | re.MULTILINE)
         if sup_label:
             val = sup_label.group(1).strip()
             if 'Panasonic' not in val:
-                val = re.sub(r'Co\.\s+Ltd', 'Co., Ltd', val)
+                val = re.sub(r'Co\.[\.,]*\s*Ltd', 'Co., Ltd', val)
                 fields["supplier_name"] = {"value": val, "confidence": 85}
 
     # Buyer: find "Panasonic ... Co., Ltd." — normalize missing comma
@@ -295,9 +337,19 @@ def process_single_file(file_obj, lang):
     pages = []
     for i, img in enumerate(images):
         try:
-            cfg = f'--oem 3 --psm 6 -l {lang}'
-            txt = pytesseract.image_to_string(img, config=cfg)
-            data = pytesseract.image_to_data(img, config=cfg, output_type=pytesseract.Output.DICT)
+            # Use PSM 3 (auto segmentation) for better multi-column/table layout detection
+            cfg3 = f'--oem 3 --psm 3 -l {lang}'
+            txt3 = pytesseract.image_to_string(img, config=cfg3)
+            # Also try PSM 6 (single block) and merge unique lines for completeness
+            cfg6 = f'--oem 3 --psm 6 -l {lang}'
+            txt6 = pytesseract.image_to_string(img, config=cfg6)
+            # Merge: use PSM 3 as base, append unique non-empty lines from PSM 6
+            lines3 = set(l.strip() for l in txt3.splitlines() if l.strip())
+            extra = [l for l in txt6.splitlines() if l.strip() and l.strip() not in lines3]
+            txt = txt3
+            if extra:
+                txt += '\n' + '\n'.join(extra)
+            data = pytesseract.image_to_data(img, config=cfg3, output_type=pytesseract.Output.DICT)
             confs = [int(c) for c in data['conf'] if int(c) > 0]
             avg = round(sum(confs)/len(confs), 1) if confs else 0
         except Exception as e:
