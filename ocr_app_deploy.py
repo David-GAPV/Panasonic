@@ -32,30 +32,30 @@ except:
     SUPPORTED_LANGS = ['eng', 'vie']
 
 FIELD_PATTERNS = {
-    "date":              r'(?:date(?:\s+of\s+issue)?|date\s+received|invoice\s+date)[:\s]+(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})',
-    "po_number":         r'(?:PO\s*(?:No\.?|Ref)?|Purchase\s+Order)[:\s]+(PO[\-][A-Z0-9\-/]{6,30})',
-    "bl_number":         r'(?:B/L\s*No\.?\s*)[:\s]+([A-Z0-9]{8,30})',
+    "date":              r'(?:date(?:\s+of\s+issue)?|date\s+received|invoice\s+date)[:\s]*\n?\s*(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})',
+    "po_number":         r'(?:PO\s*(?:No\.?|Ref)?|Purchase\s+Order)[:\s]*\n?\s*(PO[\-][A-Z0-9\-/]{6,30})',
+    "bl_number":         r'(?:B/L\s*No\.?\s*)[:\s]*\n?\s*([A-Z0-9]{8,30})',
     "total_amount":      r'(?:TOTAL\s+CIF\s+VALUE|TOTAL\s+CHARGES|total\s+amount)[:\s|]*\n?(?:USD\s*)?([\d,]+\.?\d{0,2})',
-    "vessel":            r'(?:vessel\s*/?\s*voyage)[:\s]+(.+?)(?:\s+Country|\s+$|\n)',
-    "port_of_loading":   r'(?:port\s+of\s+loading)[:\s]+([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
-    "port_of_discharge": r'(?:port\s+of\s+(?:discharge|arrival)|arrival\s+port)[:\s]+([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
-    "gross_weight":      r'(?:gross\s*w(?:t|eight)?)[:\s]+([\d,]+\.?\d*\s*kg)',
-    "net_weight":        r'(?:n\.?w\.?|net\s*w(?:t|eight)?)[:\s]+([\d,]+\.?\d*\s*kg)',
-    "measurement":       r'(?:measurement|cbm)[:\s]+([\d,]+\.?\d*\s*CBM)',
-    "incoterms":         r'(?:Incoterms)[:\s]+([A-Z]{3}\s+\w+)',
-    "currency":          r'(?:Currency)[:\s]+([A-Z]{3})',
-    "payment_terms":     r'(?:Payment)[:\s]+(.+?)(?:\s+Incoterms|\s+FOB|\s+Currency|\n|$)',
-    "booking_ref":       r'(?:booking\s*ref)[:\s]+([A-Z0-9\-]{8,30})',
-    "freight":           r'(?:ocean\s+freight)[:\s]+(?:USD\s*)?([\d,]+\.?\d{0,2})',
-    "etd":               r'(?:ETD)[:\s]+(\d{1,2}\s+\w+\s+\d{4})',
-    "eta":               r'(?:ETA)[:\s]+(\d{1,2}\s+\w+\s+\d{4})',
-    "packing_list_no":   r'(?:packing\s+list\s*n[o.]?\.?)[:\s]+([A-Z0-9\-/]{6,30})',
-    "seal_no":           r'(?:seal\s*n[o.]?)[:\s]+([A-Z0-9\-]+(?:\s*/\s*[A-Z0-9\-]+)?)',
-    "customs_clearance": r'(?:customs\s*clearance)[:\s]+(\d{1,2}\s+\w+\s+\d{4})',
-    "invoice_value":     r'(?:invoice\s+value)[:\s]+(?:USD\s*)?([\d,]+\.?\d{0,2})',
-    "lc_number":         r'(?:L/C\s*No\.?)[:\s]+([A-Z0-9\-]{8,30})',
-    "insurance_amount":  r'(?:Insurance(?:\s+Amount)?)[:\s]+(?:USD\s*)?([\d,]+\.?\d{0,2})',
-    "country_of_origin": r'(?:Country\s+of\s+Origin)[:\s]+([A-Za-z][A-Za-z ]{1,30})',
+    "vessel":            r'(?:vessel\s*/?\s*voyage)[:\s]*\n?\s*(.+?)(?:\s+Country|\s*$)',
+    "port_of_loading":   r'(?:port\s+of\s+loading)[:\s]*\n?\s*([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
+    "port_of_discharge": r'(?:port\s+of\s+(?:discharge|arrival)|arrival\s+port)[:\s]*\n?\s*([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
+    "gross_weight":      r'(?:gross\s*w(?:t|eight)?)[:\s]*\n?\s*([\d,]+\.?\d*\s*kg)',
+    "net_weight":        r'(?:n\.?w\.?|net\s*w(?:t|eight)?)[:\s]*\n?\s*([\d,]+\.?\d*\s*kg)',
+    "measurement":       r'(?:measurement|cbm)[:\s]*\n?\s*([\d,]+\.?\d*\s*CBM)',
+    "incoterms":         r'(?:Incoterms)[:\s]*\n?\s*([A-Z]{3}\s+[\w ]+?)(?:\n|$)',
+    "currency":          r'(?:Currency)[:\s]*\n?\s*([A-Z]{3})\s*$',
+    "payment_terms":     r'(?:Payment)[:\s]*\n?\s*(.+?)(?:\s+Incoterms|\s+FOB|\s+Currency|\n|$)',
+    "booking_ref":       r'(?:booking\s*ref)[:\s]*\n?\s*([A-Z0-9\-]{8,30})',
+    "freight":           r'(?:ocean\s+freight)[:\s]*\n?\s*(?:USD\s*)?([\d,]+\.?\d{0,2})',
+    "etd":               r'(?:ETD)[:\s]*\n?\s*(\d{1,2}\s+\w+\s+\d{4})',
+    "eta":               r'(?:ETA)[:\s]*\n?\s*(\d{1,2}\s+\w+\s+\d{4})',
+    "packing_list_no":   r'(?:packing\s+list\s*n[o.]?\.?)[:\s]*\n?\s*([A-Z0-9\-/]{6,30})',
+    "seal_no":           r'(?:seal\s*n[o.]?\.?)[:\s]*\n?\s*([A-Z0-9\-]+(?:\s*/\s*[A-Z0-9\-]+)?)',
+    "customs_clearance": r'(?:customs\s*clearance)[:\s]*\n?\s*(\d{1,2}\s+\w+\s+\d{4})',
+    "invoice_value":     r'(?:invoice\s+value)[:\s]*\n?\s*(?:USD\s*)?([\d,]+\.?\d{0,2})',
+    "lc_number":         r'(?:L/C\s*No\.?)[:\s]*\n?\s*([A-Z0-9\-]{8,30})',
+    "insurance_amount":  r'(?:Insurance(?:\s+Amount)?)[:\s]*\n?\s*(?:USD\s*)?([\d,]+\.?\d{0,2})',
+    "country_of_origin": r'(?:Country\s+of\s+Origin)[:\s]*\n?\s*([A-Za-z][A-Za-z ]{1,30})',
 }
 
 def extract_fields(text, filename=''):
@@ -107,8 +107,8 @@ def extract_fields(text, filename=''):
             if inv_m3:
                 fields["invoice_number"] = {"value": inv_m3.group(1).strip(), "confidence": 75}
 
-    # WH receipt number
-    wr_m = re.search(r'(?:WH\s*Receipt\s*No\.?|WR[\-])[:\s]*(WR[\-][A-Z0-9\-]+)', text, re.IGNORECASE)
+    # WH receipt number — handle both "WH Receipt No.: WR-..." and table-cell "WH Receipt No.\nWR-..."
+    wr_m = re.search(r'(?:WH\s*Receipt\s*No\.?|WR[\-])[:\s]*\n?\s*(WR[\-][A-Z0-9\-]+)', text, re.IGNORECASE | re.MULTILINE)
     if wr_m:
         fields["wh_receipt_no"] = {"value": wr_m.group(1).strip(), "confidence": 90}
     else:
@@ -122,6 +122,7 @@ def extract_fields(text, filename=''):
     for sup_clean in sup_candidates:
         val = sup_clean.group(1).strip()
         if 'Panasonic' not in val:
+            val = re.sub(r'Co\.\s+Ltd', 'Co., Ltd', val)
             fields["supplier_name"] = {"value": val, "confidence": 92}
             break
     # Fallback: Seller/Shipper/Supplier/Exporter label followed by company name on next line
@@ -130,16 +131,22 @@ def extract_fields(text, filename=''):
         if sup_label:
             val = sup_label.group(1).strip()
             if 'Panasonic' not in val:
+                val = re.sub(r'Co\.\s+Ltd', 'Co., Ltd', val)
                 fields["supplier_name"] = {"value": val, "confidence": 85}
 
-    # Buyer: find "Panasonic ... Co., Ltd."
+    # Buyer: find "Panasonic ... Co., Ltd." — normalize missing comma
     buy_clean = re.search(r'(Panasonic\s+Appliances\s+Vietnam\s+Co\.,?\s*Ltd\.)', text, re.IGNORECASE)
     if buy_clean:
-        fields["buyer_name"] = {"value": buy_clean.group(1).strip(), "confidence": 92}
+        val = buy_clean.group(1).strip()
+        # Normalize "Co. Ltd." → "Co., Ltd."
+        val = re.sub(r'Co\.\s+Ltd', 'Co., Ltd', val)
+        fields["buyer_name"] = {"value": val, "confidence": 92}
     else:
-        buy_m = re.search(r'(Panasonic[\w\s]+Co\.)', text, re.IGNORECASE)
+        buy_m = re.search(r'(Panasonic[\w\s]+Co\.,?\s*Ltd\.?)', text, re.IGNORECASE)
         if buy_m:
-            fields["buyer_name"] = {"value": buy_m.group(1).strip(), "confidence": 80}
+            val = buy_m.group(1).strip()
+            val = re.sub(r'Co\.\s+Ltd', 'Co., Ltd', val)
+            fields["buyer_name"] = {"value": val, "confidence": 80}
 
     # Tax code: Tax Code (MST): 0101248141
     tax_m = re.search(r'(?:Tax\s*Code)[^:]*[:\s]+(\d{10,13})', text, re.IGNORECASE)
@@ -182,15 +189,17 @@ def classify_document(text):
     t = text.lower()
     # Score-based classification to avoid order-dependent misclassification
     scores = {'invoice': 0, 'packing_list': 0, 'bill_of_lading': 0, 'warehouse_receipt': 0}
-    # Warehouse receipt (check first - most specific keywords)
-    for k in ['warehouse receipt', 'goods received', 'nhap kho', 'wh receipt no', 'date received', 'goods received note']:
-        if k in t: scores['warehouse_receipt'] += 20
+    # Warehouse receipt (check first - most specific keywords, higher weight)
+    for k in ['warehouse receipt', 'goods received', 'nhap kho', 'wh receipt no', 'date received', 'goods received note', 'receiving party', 'inspection']:
+        if k in t: scores['warehouse_receipt'] += 25
     # Bill of lading
     for k in ['bill of lading', 'b/l no', 'booking ref', 'place of issue', 'sea waybill', 'ocean bill']:
         if k in t: scores['bill_of_lading'] += 20
     # Packing list
-    for k in ['packing list', 'carton no', 'packing list no', 'ctns', 'carton marking', 'shipping marks']:
+    for k in ['packing list', 'carton no', 'packing list no', 'carton marking', 'shipping marks']:
         if k in t: scores['packing_list'] += 20
+    # 'ctns' is weak — appears in B/L and WR too, lower weight
+    if 'ctns' in t: scores['packing_list'] += 10
     # Invoice
     for k in ['commercial invoice', 'unit price', 'amount in words', 'subtotal', 'total cif value', 'proforma invoice']:
         if k in t: scores['invoice'] += 20
