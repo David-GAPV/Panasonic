@@ -32,13 +32,13 @@ except:
     SUPPORTED_LANGS = ['eng', 'vie']
 
 FIELD_PATTERNS = {
-    "date":              r'(?:date[:\s]+)(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})',
-    "po_number":         r'(?:PO\s*(?:No\.?|Ref)?[:\s]+)(PO[\-][A-Z0-9\-/]{6,30})',
-    "bl_number":         r'(?:B/L\s*No\.?\s*[:\s]+)([A-Z0-9]{8,30})',
+    "date":              r'(?:date(?:\s+of\s+issue)?|date\s+received|invoice\s+date)[:\s]+(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})',
+    "po_number":         r'(?:PO\s*(?:No\.?|Ref)?|Purchase\s+Order)[:\s]+(PO[\-][A-Z0-9\-/]{6,30})',
+    "bl_number":         r'(?:B/L\s*No\.?\s*)[:\s]+([A-Z0-9]{8,30})',
     "total_amount":      r'(?:TOTAL\s+CIF\s+VALUE|TOTAL\s+CHARGES|total\s+amount)[:\s|]*\n?(?:USD\s*)?([\d,]+\.?\d{0,2})',
     "vessel":            r'(?:vessel\s*/?\s*voyage)[:\s]+(.+?)(?:\s+Country|\s+$|\n)',
     "port_of_loading":   r'(?:port\s+of\s+loading)[:\s]+([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
-    "port_of_discharge": r'(?:port\s+of\s+(?:discharge|arrival))[:\s]+([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
+    "port_of_discharge": r'(?:port\s+of\s+(?:discharge|arrival)|arrival\s+port)[:\s]+([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
     "gross_weight":      r'(?:gross\s*w(?:t|eight)?)[:\s]+([\d,]+\.?\d*\s*kg)',
     "net_weight":        r'(?:n\.?w\.?|net\s*w(?:t|eight)?)[:\s]+([\d,]+\.?\d*\s*kg)',
     "measurement":       r'(?:measurement|cbm)[:\s]+([\d,]+\.?\d*\s*CBM)',
@@ -53,6 +53,9 @@ FIELD_PATTERNS = {
     "seal_no":           r'(?:seal\s*n[o.]?)[:\s]+([A-Z0-9\-]+(?:\s*/\s*[A-Z0-9\-]+)?)',
     "customs_clearance": r'(?:customs\s*clearance)[:\s]+(\d{1,2}\s+\w+\s+\d{4})',
     "invoice_value":     r'(?:invoice\s+value)[:\s]+(?:USD\s*)?([\d,]+\.?\d{0,2})',
+    "lc_number":         r'(?:L/C\s*No\.?)[:\s]+([A-Z0-9\-]{8,30})',
+    "insurance_amount":  r'(?:Insurance(?:\s+Amount)?)[:\s]+(?:USD\s*)?([\d,]+\.?\d{0,2})',
+    "country_of_origin": r'(?:Country\s+of\s+Origin)[:\s]+([A-Za-z][A-Za-z ]{1,30})',
 }
 
 def extract_fields(text, filename=''):
@@ -64,12 +67,39 @@ def extract_fields(text, filename=''):
             conf = min(95, 60 + len(value) * 2)
             fields[field] = {"value": value, "confidence": conf}
 
+    # Date fallback: table-style "Date of Issue\n18 March 2025" or "Date Received\n21 March 2025"
+    if "date" not in fields:
+        date_fb = re.search(r'(?:Date\s+(?:of\s+Issue|Received|Issued))\s*\n\s*(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})', text, re.IGNORECASE | re.MULTILINE)
+        if date_fb:
+            fields["date"] = {"value": date_fb.group(1).strip(), "confidence": 85}
+
+    # Port of discharge fallback: "Arrival Port" label
+    if "port_of_discharge" not in fields:
+        pod_fb = re.search(r'(?:arrival\s+port|destination\s+port|port\s+of\s+destination)[:\s]+([A-Za-z][A-Za-z0-9 ,\.]{4,60})', text, re.IGNORECASE)
+        if pod_fb:
+            fields["port_of_discharge"] = {"value": pod_fb.group(1).strip(), "confidence": 85}
+
+    # Gross weight fallback: standalone in table cell or after "Gross Weight" header
+    if "gross_weight" not in fields:
+        gw_fb = re.search(r'Gross\s+Weight\s*\n\s*([\d,]+\.?\d*\s*kg)', text, re.IGNORECASE | re.MULTILINE)
+        if gw_fb:
+            fields["gross_weight"] = {"value": gw_fb.group(1).strip(), "confidence": 80}
+        else:
+            # Table layout: "Gross Weight" header in one cell, value in corresponding data cell
+            # Look for standalone weight value (digits + kg) that isn't already captured as net weight
+            nw_val = fields.get("net_weight", {}).get("value", "")
+            gw_candidates = re.findall(r'^([\d,]+\.?\d*\s*kg)\s*$', text, re.IGNORECASE | re.MULTILINE)
+            for cand in gw_candidates:
+                if cand.strip() != nw_val.strip() and 'Gross Weight' in text:
+                    fields["gross_weight"] = {"value": cand.strip(), "confidence": 75}
+                    break
+
     # Invoice number: prioritize INV- pattern (most reliable), then Invoice No/Ref label
     inv_m = re.search(r'(INV[\-][\w\-]+)', text)
     if inv_m:
         fields["invoice_number"] = {"value": inv_m.group(1).strip(), "confidence": 92}
     else:
-        inv_m2 = re.search(r'(?:Invoice\s*(?:No\.?|Ref))[:\s]*\n?\s*([A-Z0-9][\w\-/]{5,30})', text, re.IGNORECASE | re.MULTILINE)
+        inv_m2 = re.search(r'(?:Invoice\s*(?:No\.?|Ref\.?))[:\s]*\n?\s*([A-Z0-9][\w\-/]{5,30})', text, re.IGNORECASE | re.MULTILINE)
         if inv_m2:
             fields["invoice_number"] = {"value": inv_m2.group(1).strip(), "confidence": 85}
         elif filename:
@@ -82,21 +112,21 @@ def extract_fields(text, filename=''):
     if wr_m:
         fields["wh_receipt_no"] = {"value": wr_m.group(1).strip(), "confidence": 90}
     else:
-        wr_m2 = re.search(r'(WR-\d{4}-[A-Z]{2}-\d{4,6})', text)
+        wr_m2 = re.search(r'(WR-\d{4}-[A-Z]{2,4}-\d{4,6})', text)
         if wr_m2:
             fields["wh_receipt_no"] = {"value": wr_m2.group(1).strip(), "confidence": 85}
 
     # Supplier: find company name with city prefix + Co., Ltd.
-    sup_pat = r'^((?:Shenzhen|Shanghai|Beijing|Guangzhou|Dongguan|Foshan)\s+\w[\w\s,\.]+?Co\.,?\s*Ltd\.?)'
+    sup_pat = r'^((?:Shenzhen|Shanghai|Beijing|Guangzhou|Dongguan|Foshan|Ningbo|Xiamen|Suzhou|Hangzhou)\s+\w[\w\s,\.]+?Co\.,?\s*Ltd\.?)'
     sup_candidates = re.finditer(sup_pat, text, re.IGNORECASE | re.MULTILINE)
     for sup_clean in sup_candidates:
         val = sup_clean.group(1).strip()
         if 'Panasonic' not in val:
             fields["supplier_name"] = {"value": val, "confidence": 92}
             break
-    # Fallback: Seller/Shipper/Supplier label followed by company name on next line
+    # Fallback: Seller/Shipper/Supplier/Exporter label followed by company name on next line
     if "supplier_name" not in fields:
-        sup_label = re.search(r'(?:Seller|Shipper|Supplier)[:\s]*\n\s*(.+?Co\.,?\s*Ltd\.?)', text, re.IGNORECASE | re.MULTILINE)
+        sup_label = re.search(r'(?:Seller|Shipper|Supplier|Exporter)[^:\n]*[:\s]*\n\s*(.+?Co\.,?\s*Ltd\.?)', text, re.IGNORECASE | re.MULTILINE)
         if sup_label:
             val = sup_label.group(1).strip()
             if 'Panasonic' not in val:
@@ -121,17 +151,17 @@ def extract_fields(text, filename=''):
     if hs_all:
         fields["hs_codes"] = {"value": ", ".join(sorted(hs_all)), "confidence": 90}
 
-    # Total packages
-    tp = re.search(r'(?:total\s+packages)[:\s]+(\d[\d,]*)', text, re.IGNORECASE)
+    # Total packages: labeled or standalone "NNN cartons/CTNS"
+    tp = re.search(r'(?:total\s+packages|no\.?\s+of\s+packages)[:\s]+(\d[\d,]*)', text, re.IGNORECASE)
     if tp:
         fields["total_packages"] = {"value": tp.group(1).strip(), "confidence": 85}
     else:
-        tp2 = re.search(r'(\d+)\s+(?:cartons|ctns)', text, re.IGNORECASE)
+        tp2 = re.search(r'(\d[\d,]*)\s+(?:cartons|ctns|packages)\b', text, re.IGNORECASE)
         if tp2:
-            fields["total_packages"] = {"value": tp2.group(1).strip() + " cartons", "confidence": 75}
+            fields["total_packages"] = {"value": tp2.group(1).strip(), "confidence": 75}
 
-    # Container numbers - collect unique
-    containers = list(dict.fromkeys(re.findall(r'([A-Z]{4}\d{7}[\-\d]*)', text)))
+    # Container numbers - standard ISO 6346: 4 letters + 7 digits
+    containers = list(dict.fromkeys(re.findall(r'\b([A-Z]{4}\d{7})\b', text)))
     if containers:
         fields["container_no"] = {"value": " / ".join(containers[:4]), "confidence": 90}
 
@@ -153,16 +183,16 @@ def classify_document(text):
     # Score-based classification to avoid order-dependent misclassification
     scores = {'invoice': 0, 'packing_list': 0, 'bill_of_lading': 0, 'warehouse_receipt': 0}
     # Warehouse receipt (check first - most specific keywords)
-    for k in ['warehouse receipt', 'goods received', 'nhap kho', 'wh receipt no', 'date received']:
+    for k in ['warehouse receipt', 'goods received', 'nhap kho', 'wh receipt no', 'date received', 'goods received note']:
         if k in t: scores['warehouse_receipt'] += 20
     # Bill of lading
-    for k in ['bill of lading', 'b/l no', 'booking ref', 'place of issue', 'sea waybill']:
+    for k in ['bill of lading', 'b/l no', 'booking ref', 'place of issue', 'sea waybill', 'ocean bill']:
         if k in t: scores['bill_of_lading'] += 20
     # Packing list
-    for k in ['packing list', 'carton no', 'packing list no', 'ctns', 'carton marking']:
+    for k in ['packing list', 'carton no', 'packing list no', 'ctns', 'carton marking', 'shipping marks']:
         if k in t: scores['packing_list'] += 20
     # Invoice
-    for k in ['commercial invoice', 'unit price', 'amount in words', 'subtotal', 'total cif value']:
+    for k in ['commercial invoice', 'unit price', 'amount in words', 'subtotal', 'total cif value', 'proforma invoice']:
         if k in t: scores['invoice'] += 20
     best = max(scores, key=scores.get)
     conf = min(95, scores[best] + 40)
