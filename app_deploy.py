@@ -991,11 +991,14 @@ def report_pdf():
         # X-axis line
         pdf.line(chart_x, chart_y + chart_h, chart_x + chart_w, chart_y + chart_h)
 
-        # Y-axis title (rotated 90° using fpdf2 rotation)
-        pdf.set_font("Helvetica", "", 9)
+        # Y-axis title — written vertically using individual characters top-to-bottom
+        pdf.set_font("Helvetica", "B", 8)
         pdf.set_text_color(80, 80, 80)
-        with pdf.rotation(angle=90, x=chart_x - 22, y=chart_y + chart_h / 2):
-            pdf.text(chart_x - 22, chart_y + chart_h / 2, "Documents")
+        y_title = "Documents"
+        yt_x = chart_x - 22
+        yt_start = chart_y + (chart_h - len(y_title) * 5) / 2
+        for i, ch in enumerate(y_title):
+            pdf.text(yt_x, yt_start + i * 5, ch)
 
         # Plot data points and connecting lines
         points = []
