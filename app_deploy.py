@@ -991,14 +991,25 @@ def report_pdf():
         # X-axis line
         pdf.line(chart_x, chart_y + chart_h, chart_x + chart_w, chart_y + chart_h)
 
-        # Y-axis title — written vertically using individual characters top-to-bottom
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_text_color(80, 80, 80)
-        y_title = "Documents"
-        yt_x = chart_x - 22
-        yt_start = chart_y + (chart_h - len(y_title) * 5) / 2
-        for i, ch in enumerate(y_title):
-            pdf.text(yt_x, yt_start + i * 5, ch)
+        # Y-axis title — "Number of Documents" rotated 90° (vertical, reading bottom-to-top)
+        import math
+        yt_label = "Number of Documents"
+        yt_x = chart_x - 25
+        yt_y = chart_y + chart_h / 2
+        x_pt = yt_x * pdf.k
+        y_pt = (pdf.h - yt_y) * pdf.k
+        c_a = math.cos(math.radians(90))
+        s_a = math.sin(math.radians(90))
+        pdf.set_font("Helvetica", "", 9)
+        tw = pdf.get_string_width(yt_label) / 2
+        # Get current font PDF reference
+        font_ref = f"F{pdf.current_font.i}"
+        # Use low-level PDF commands: save state, rotate, draw text, restore
+        pdf._out("q")
+        pdf._out(f"{c_a:.5f} {s_a:.5f} {-s_a:.5f} {c_a:.5f} {x_pt:.2f} {y_pt:.2f} cm")
+        pdf._out("0.3137 0.3137 0.3137 rg")
+        pdf._out(f"BT /{font_ref} 9.00 Tf {-tw * pdf.k:.2f} 0 Td ({yt_label}) Tj ET")
+        pdf._out("Q")
 
         # Plot data points and connecting lines
         points = []
