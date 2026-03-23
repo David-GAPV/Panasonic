@@ -898,17 +898,18 @@ def report_pdf():
 
     section("1. Processing Volume")
     kv("Total Documents Processed:", str(total_docs))
-    kv("Documents by Type:", "")
-    for r in by_type:
-        pdf.set_font("Helvetica", "", 10)
-        pdf.cell(20)
-        pdf.cell(0, 6, f"  {r['doc_type'].replace('_',' ').title()}: {r['cnt']}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
-    kv("Documents by Status:", "")
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 7, "Documents by Type:", new_x="LMARGIN", new_y="NEXT")
+    for r in by_type:
+        kv(f"  {r['doc_type'].replace('_',' ').title()}:", str(r['cnt']))
+    pdf.ln(2)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(100, 100, 100)
+    pdf.cell(0, 7, "Documents by Status:", new_x="LMARGIN", new_y="NEXT")
     for r in by_status:
-        pdf.set_font("Helvetica", "", 10)
-        pdf.cell(20)
-        pdf.cell(0, 6, f"  {r['status'].replace('_',' ').title()}: {r['cnt']}", new_x="LMARGIN", new_y="NEXT")
+        kv(f"  {r['status'].replace('_',' ').title()}:", str(r['cnt']))
     pdf.ln(4)
 
     section("2. Accuracy Metrics")
@@ -923,11 +924,12 @@ def report_pdf():
     kv("Total Errors Found:", str(total_errors))
     kv("Manual Corrections Made:", str(total_corrections))
     if errors_by_type:
-        kv("Errors by Category:", "")
+        pdf.ln(2)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_text_color(100, 100, 100)
+        pdf.cell(0, 7, "Errors by Category:", new_x="LMARGIN", new_y="NEXT")
         for r in errors_by_type:
-            pdf.set_font("Helvetica", "", 10)
-            pdf.cell(20)
-            pdf.cell(0, 6, f"  {r['check_type'].replace('_',' ').title()}: {r['cnt']}", new_x="LMARGIN", new_y="NEXT")
+            kv(f"  {r['check_type'].replace('_',' ').title()}:", str(r['cnt']))
     pdf.ln(4)
 
     section("4. Cost Savings Estimate")
@@ -939,16 +941,104 @@ def report_pdf():
 
     if daily:
         section("5. Daily Processing Volume (Last 30 Days)")
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_fill_color(45, 66, 133)
-        pdf.set_text_color(255, 255, 255)
-        pdf.cell(60, 7, "Date", border=1, fill=True)
-        pdf.cell(40, 7, "Documents", border=1, fill=True, new_x="LMARGIN", new_y="NEXT")
-        pdf.set_font("Helvetica", "", 9)
+        # Sort chronologically and draw a line chart
+        daily_sorted = sorted(daily, key=lambda r: r['day'])
+        n = len(daily_sorted)
+        max_cnt = max(r['cnt'] for r in daily_sorted) or 1
+
+        # Chart title
+        pdf.set_font("Helvetica", "B", 11)
         pdf.set_text_color(51, 51, 51)
-        for r in daily[:20]:
-            pdf.cell(60, 6, str(r['day']), border=1)
-            pdf.cell(40, 6, str(r['cnt']), border=1, new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 8, "Documents Processed per Day", align="C", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+
+        # Chart dimensions — extra left margin for Y labels
+        chart_x = 35
+        chart_y = pdf.get_y()
+        chart_w = 150
+        chart_h = 70
+
+        # Check page space
+        if chart_y + chart_h + 25 > 280:
+            pdf.add_page()
+            chart_y = pdf.get_y()
+
+        # Y-axis scale: round up to nice number
+        y_step = max(1, (max_cnt + 4) // 5)
+        y_max = y_step * 5
+        if y_max < max_cnt:
+            y_max = y_step * 6
+
+        # Background
+        pdf.set_fill_color(248, 249, 252)
+        pdf.rect(chart_x, chart_y, chart_w, chart_h, style='F')
+
+        # Horizontal grid lines + Y-axis labels
+        pdf.set_draw_color(210, 210, 210)
+        pdf.set_line_width(0.2)
+        for i in range(6):
+            gy = chart_y + chart_h - (i * chart_h / 5)
+            pdf.line(chart_x, gy, chart_x + chart_w, gy)
+            label_val = int(y_max * i / 5)
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_text_color(100, 100, 100)
+            pdf.text(chart_x - 10, gy + 1.5, str(label_val))
+
+        # Y-axis line
+        pdf.set_draw_color(120, 120, 120)
+        pdf.set_line_width(0.4)
+        pdf.line(chart_x, chart_y, chart_x, chart_y + chart_h)
+        # X-axis line
+        pdf.line(chart_x, chart_y + chart_h, chart_x + chart_w, chart_y + chart_h)
+
+        # Y-axis title (rotated 90° using fpdf2 rotation)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(80, 80, 80)
+        with pdf.rotation(angle=90, x=chart_x - 22, y=chart_y + chart_h / 2):
+            pdf.text(chart_x - 22, chart_y + chart_h / 2, "Documents")
+
+        # Plot data points and connecting lines
+        points = []
+        for i, r in enumerate(daily_sorted):
+            px = chart_x + (i + 0.5) * chart_w / max(n, 1)
+            py = chart_y + chart_h - (r['cnt'] / y_max * chart_h) if y_max > 0 else chart_y + chart_h
+            points.append((px, py, r['cnt']))
+
+        # Draw line segments
+        if len(points) >= 2:
+            pdf.set_draw_color(45, 66, 133)
+            pdf.set_line_width(0.8)
+            for i in range(len(points) - 1):
+                pdf.line(points[i][0], points[i][1], points[i+1][0], points[i+1][1])
+
+        # Draw dots + value labels at each point
+        for px, py, cnt in points:
+            # White border circle
+            pdf.set_fill_color(255, 255, 255)
+            pdf.ellipse(px - 2, py - 2, 4, 4, style='F')
+            # Blue filled circle
+            pdf.set_fill_color(45, 66, 133)
+            pdf.ellipse(px - 1.3, py - 1.3, 2.6, 2.6, style='F')
+            # Value label above dot
+            pdf.set_font("Helvetica", "B", 7)
+            pdf.set_text_color(45, 66, 133)
+            pdf.text(px - 3, py - 4, str(cnt))
+
+        # X-axis date labels
+        pdf.set_font("Helvetica", "", 7)
+        pdf.set_text_color(100, 100, 100)
+        label_step = max(1, n // 10)
+        for i, r in enumerate(daily_sorted):
+            if i % label_step == 0 or i == n - 1:
+                px = chart_x + (i + 0.5) * chart_w / max(n, 1)
+                day_str = str(r['day'])[5:]  # MM-DD
+                pdf.text(px - 6, chart_y + chart_h + 5, day_str)
+
+        # X-axis title
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(80, 80, 80)
+        pdf.text(chart_x + chart_w / 2 - 5, chart_y + chart_h + 11, "Date")
+        pdf.set_y(chart_y + chart_h + 14)
 
     buf = io.BytesIO()
     pdf.output(buf)
