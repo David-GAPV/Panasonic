@@ -32,30 +32,71 @@ a:hover{text-decoration:underline}
 </style></head><body>
 <header>
 <img src="/static/images/Panasonic_whitetext.jpg" alt="Panasonic">
-<div style="color:#fff;font-size:18px;font-weight:300">IDP System</div>
+<div style="color:#fff;font-size:14px;display:flex;align-items:center;gap:16px">
+<span>{{ user }} <span style="opacity:0.7;font-size:12px">({{ user_role }})</span></span>
+<a href="/logout" style="color:#fff;opacity:0.8;text-decoration:none;font-size:13px">Logout</a>
+</div>
 </header>
 <nav>
 <a href="/" class="active">Dashboard</a>
-<a href="/review" >Review Queue</a>
+{% if user_role in ('admin','reviewer') %}<a href="/review" >Review Queue</a>{% endif %}
 <a href="/upload" >Upload</a>
-<a href="/sap/simulate" >SAP Integration</a>
+{% if user_role == 'admin' %}<a href="/sap/simulate" >SAP Integration</a>{% endif %}
+{% if user_role in ('admin','reviewer') %}<a href="/analytics" >Analytics</a>
+<a href="/report" >Reports</a>{% endif %}
 <a href="/api/status" target="_blank">Status</a>
 </nav>
 <div class="container">
 <div class="stats">
+<div class="stat-card"><div class="num">{{ total_docs }}</div><div class="label">Total Documents</div></div>
+<div class="stat-card"><div class="num">{{ today_count }}</div><div class="label">Processed Today</div></div>
+<div class="stat-card"><div class="num">{{ avg_conf }}%</div><div class="label">Avg Confidence</div></div>
+<div class="stat-card"><div class="num" style="color:#f57c00">{{ flagged_count }}</div><div class="label">Flagged for Review</div></div>
 {% for status, count in stats.items() %}
 <div class="stat-card"><div class="num">{{ count }}</div><div class="label">{{ status|replace('_',' ') }}</div></div>
 {% endfor %}
 </div>
-<div class="card"><div class="card-header"><h2>Recent Documents</h2></div><div class="card-body">
-<table><thead><tr><th>Document ID</th><th>Type</th><th>Filename</th><th>Status</th><th>Confidence</th><th>Issues</th><th>Action</th></tr></thead><tbody>
+<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+<h2>Recent Documents</h2>
+<div>{% if user_role in ('admin','reviewer') %}<a href="/export/csv" style="padding:8px 16px;background:#4caf50;color:#fff;border-radius:4px;font-size:13px;margin-right:8px;text-decoration:none">Export CSV</a><a href="/export/json" style="padding:8px 16px;background:#2D4285;color:#fff;border-radius:4px;font-size:13px;text-decoration:none">Export JSON</a>{% endif %}</div>
+</div><div class="card-body">
+<form method="GET" action="/" style="display:flex;gap:12px;margin-bottom:20px;flex-wrap:wrap;align-items:center">
+<input type="text" name="q" value="{{ q }}" placeholder="Search by Doc ID or filename..." style="padding:8px 12px;border:1px solid #ddd;border-radius:4px;font-size:14px;min-width:250px">
+<select name="status" style="padding:8px 12px;border:1px solid #ddd;border-radius:4px;font-size:14px">
+<option value="">All Status</option>
+{% for s in ['extracted','flagged','reviewing','completed','rejected'] %}<option value="{{ s }}" {{ 'selected' if status_filter==s else '' }}>{{ s|replace('_',' ')|title }}</option>{% endfor %}
+</select>
+<select name="doc_type" style="padding:8px 12px;border:1px solid #ddd;border-radius:4px;font-size:14px">
+<option value="">All Types</option>
+{% for dt in doc_types %}<option value="{{ dt }}" {{ 'selected' if doc_type_filter==dt else '' }}>{{ dt|replace('_',' ')|title }}</option>{% endfor %}
+</select>
+<select name="sort" style="padding:8px 12px;border:1px solid #ddd;border-radius:4px;font-size:14px">
+<option value="newest" {{ 'selected' if sort_by=='newest' else '' }}>Newest First</option>
+<option value="oldest" {{ 'selected' if sort_by=='oldest' else '' }}>Oldest First</option>
+</select>
+<button type="submit" style="padding:8px 20px;background:#2D4285;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:14px">Search</button>
+{% if q or status_filter or doc_type_filter %}<a href="/" style="padding:8px 16px;color:#666;font-size:14px">Clear</a>{% endif %}
+</form>
+<table><thead><tr><th>Document ID</th><th>Type</th><th>Shipment</th><th>Filename</th><th>Status</th><th>Confidence</th><th>Issues</th><th>Upload Time</th><th>Action</th></tr></thead><tbody>
 {% for d in docs %}<tr>
 <td><a href="/document/{{ d.doc_id }}">{{ d.doc_id }}</a></td>
 <td>{{ d.doc_type|replace('_',' ')|title if d.doc_type else '' }}</td>
-<td style="max-width:300px;overflow:hidden;text-overflow:ellipsis">{{ d.filename or '' }}</td>
+<td style="font-size:12px;color:#666">{{ d.shipment_ref or '—' }}</td>
+<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ d.filename or '' }}</td>
 <td><span class="badge badge-{{ d.status }}">{{ d.status|replace('_',' ') }}</span></td>
 <td>{{ d.type_confidence }}%</td>
 <td>{{ d.failed_checks or 0 }}</td>
-<td><a href="/document/{{ d.doc_id }}">View</a></td>
+<td style="font-size:12px;color:#666;white-space:nowrap">{{ (d.created_at + timedelta(hours=7)).strftime('%d %b %Y %H:%M') if d.created_at else '—' }}</td>
+<td>
+{% if d.status in ('flagged', 'reviewing', 'extracted') and user_role in ('admin','reviewer') %}
+<a href="/document/{{ d.doc_id }}" style="padding:4px 12px;background:#f57c00;color:#fff;border-radius:4px;font-size:12px;text-decoration:none">Review</a>
+{% elif d.status == 'completed' or d.status == 'approved' %}
+<a href="/document/{{ d.doc_id }}" style="padding:4px 12px;background:#2e7d32;color:#fff;border-radius:4px;font-size:12px;text-decoration:none">View</a>
+{% elif d.status == 'rejected' %}
+<a href="/document/{{ d.doc_id }}" style="padding:4px 12px;background:#d32f2f;color:#fff;border-radius:4px;font-size:12px;text-decoration:none">View</a>
+{% else %}
+<a href="/document/{{ d.doc_id }}" style="padding:4px 12px;background:#1976d2;color:#fff;border-radius:4px;font-size:12px;text-decoration:none">View</a>
+{% endif %}
+</td>
 </tr>{% endfor %}</tbody></table>
 </div></div></div></body></html>

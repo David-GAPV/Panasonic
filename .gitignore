@@ -1,0 +1,30 @@
+# Sensitive files
+*.pem
+*.key
+deploy/.deploy-state
+deploy/deployment.log
+deploy/revalidate_all.py
+deploy/seed_master.sql
+
+# Environment / secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+*.tmp
+*.bak

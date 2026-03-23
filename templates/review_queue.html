@@ -33,23 +33,35 @@ a:hover{text-decoration:underline}
 </header>
 <nav>
 <a href="/" >Dashboard</a>
-<a href="/review" class="active">Review Queue</a>
+{% if user_role in ('admin','reviewer') %}<a href="/review" class="active">Review Queue</a>{% endif %}
 <a href="/upload" >Upload</a>
-<a href="/sap/simulate" >SAP Integration</a>
+{% if user_role == 'admin' %}<a href="/sap/simulate" >SAP Integration</a>{% endif %}
+{% if user_role in ('admin','reviewer') %}<a href="/analytics" >Analytics</a>
+<a href="/report" >Reports</a>{% endif %}
 <a href="/api/status" target="_blank">Status</a>
 </nav>
 <div class="container">
 <div class="alert">Documents requiring human review and approval</div>
-<div class="card"><div class="card-header"><h2>Pending Review ({{ docs|length }})</h2></div><div class="card-body">
+<div class="card"><div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+<h2>Pending Review ({{ docs|length }})</h2>
+<form method="GET" action="/review" style="display:flex;gap:8px;align-items:center">
+<label style="font-size:13px;color:#666">Sort:</label>
+<select name="sort" onchange="this.form.submit()" style="padding:6px 10px;border:1px solid #ddd;border-radius:4px;font-size:13px">
+<option value="newest" {{ 'selected' if sort_by=='newest' else '' }}>Newest First</option>
+<option value="oldest" {{ 'selected' if sort_by=='oldest' else '' }}>Oldest First</option>
+</select>
+</form>
+</div><div class="card-body">
 {% if docs %}
-<table><thead><tr><th>Document ID</th><th>Type</th><th>Status</th><th>Confidence</th><th>Issues</th><th>Action</th></tr></thead><tbody>
+<table><thead><tr><th>Document ID</th><th>Type</th><th>Status</th><th>Confidence</th><th>Issues</th><th>Upload Time</th><th>Action</th></tr></thead><tbody>
 {% for d in docs %}<tr>
 <td><a href="/document/{{ d.doc_id }}">{{ d.doc_id }}</a></td>
 <td>{{ d.doc_type|replace('_',' ')|title }}</td>
 <td><span class="badge badge-{{ d.status }}">{{ d.status|replace('_',' ') }}</span></td>
 <td>{{ d.type_confidence }}%</td>
 <td>{{ d.failed_checks or 0 }}</td>
-<td><a href="/document/{{ d.doc_id }}">Review</a></td>
+<td style="font-size:12px;color:#666;white-space:nowrap">{{ (d.created_at + timedelta(hours=7)).strftime('%d %b %Y %H:%M') if d.created_at else '—' }}</td>
+<td><a href="/document/{{ d.doc_id }}" style="padding:4px 14px;background:#f57c00;color:#fff;border-radius:4px;font-size:12px;text-decoration:none">Review</a></td>
 </tr>{% endfor %}</tbody></table>
 {% else %}<p style="text-align:center;color:#999;padding:60px">No documents pending review</p>{% endif %}
 </div></div></div></body></html>

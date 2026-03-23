@@ -50,14 +50,20 @@ input[type=file]:hover{border-color:#2D4285;background:#f0f7ff}
 </header>
 <nav>
 <a href="/" >Dashboard</a>
-<a href="/review" >Review Queue</a>
+{% if user_role in ('admin','reviewer') %}<a href="/review" >Review Queue</a>{% endif %}
 <a href="/upload" class="active">Upload</a>
-<a href="/sap/simulate" >SAP Integration</a>
+{% if user_role == 'admin' %}<a href="/sap/simulate" >SAP Integration</a>{% endif %}
+{% if user_role in ('admin','reviewer') %}<a href="/analytics" >Analytics</a>
+<a href="/report" >Reports</a>{% endif %}
 <a href="/api/status" target="_blank">Status</a>
 </nav>
 <div class="container" style="max-width:1000px">
 <div class="card"><div class="card-header"><h2>Upload Documents</h2></div><div class="card-body">
 <p style="color:#666;margin-bottom:20px">Supported: PDF, PNG, JPEG, TIFF, DOCX, HEIC, WebP | Max: 16 MB per file | Select multiple files for batch upload</p>
+<div style="margin-bottom:16px">
+<label style="font-weight:500;font-size:14px;color:#333;display:block;margin-bottom:6px">Shipment Reference <span style="color:#999;font-weight:400">(group related documents for cross-verification)</span></label>
+<input type="text" id="shipmentRef" placeholder="e.g. SHIP-2025-001 or PO-2025-ABC" style="width:100%;max-width:400px;padding:10px 14px;border:1px solid #ccc;border-radius:4px;font-size:14px">
+</div>
 <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg,.tiff,.tif,.docx,.heic,.heif,.webp" multiple>
 <div class="file-count" id="fileCount"></div>
 <button class="btn" id="submitBtn" disabled onclick="startUpload()">Upload & Extract</button>
@@ -117,6 +123,8 @@ function uploadFile(file, idx) {
   return new Promise(function(resolve) {
     var fd = new FormData();
     fd.append('files', file);
+    var shipRef = document.getElementById('shipmentRef').value.trim();
+    if (shipRef) fd.append('shipment_ref', shipRef);
 
     var xhr = new XMLHttpRequest();
     xhr.open('POST', '/upload', true);

@@ -35,7 +35,7 @@ input[type=text]:focus{outline:none;border-color:#2D4285}
 <script>
 function approveDoc(id){if(!confirm('Approve and send to SAP?'))return;fetch('/document/'+id+'/approve',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.message);location.reload()})}
 function rejectDoc(id){const r=prompt('Rejection reason:');if(!r)return;fetch('/document/'+id+'/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:r})}).then(r=>r.json()).then(d=>{alert(d.message);location.reload()})}
-function updateField(fid){const v=document.getElementById('field_'+fid).value;fetch('/document/{{doc.doc_id}}/update_field',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({field_id:fid,value:v})}).then(r=>r.json()).then(d=>{if(d.success)alert('Field updated')})}
+function updateField(fid){const el=document.getElementById('field_'+fid);const v=el.value;if(v===el.dataset.orig)return;fetch('/document/{{doc.doc_id}}/update_field',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({field_id:fid,value:v})}).then(r=>r.json()).then(d=>{if(d.success){el.dataset.orig=v;el.style.borderColor='#4caf50';setTimeout(()=>{el.style.borderColor='#ddd'},1500);if(d.validations&&d.validations.length>0){let html='<tr><th>Check</th><th>Result</th><th>Detail</th></tr>';d.validations.forEach(v=>{html+='<tr><td>'+v.check_name.replace(/_/g,' ')+'</td><td>'+(v.passed?'<span style="color:#388e3c;font-weight:500">PASS</span>':'<span style="color:#d32f2f;font-weight:500">FAIL</span>')+'</td><td>'+(v.detail||'')+'</td></tr>'});const vt=document.getElementById('validation-table');if(vt)vt.innerHTML=html}if(d.audit&&d.audit.length>0){let html='<tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr>';d.audit.forEach(a=>{html+='<tr><td>'+a.time+'</td><td>'+a.user+'</td><td>'+a.action+'</td><td style="max-width:500px;overflow:hidden;text-overflow:ellipsis">'+a.detail+'</td></tr>'});const at=document.getElementById('audit-table');if(at)at.innerHTML=html}if(d.new_status){const sb=document.getElementById('status-badge');if(sb){sb.className='badge badge-'+d.new_status;sb.textContent=d.new_status.replace(/_/g,' ')}}}})}
 </script>
 </head><body>
 <header>
@@ -44,50 +44,72 @@ function updateField(fid){const v=document.getElementById('field_'+fid).value;fe
 </header>
 <nav>
 <a href="/" >Dashboard</a>
-<a href="/review" >Review Queue</a>
+{% if user_role in ('admin','reviewer') %}<a href="/review" >Review Queue</a>{% endif %}
 <a href="/upload" >Upload</a>
-<a href="/sap/simulate" >SAP Integration</a>
+{% if user_role == 'admin' %}<a href="/sap/simulate" >SAP Integration</a>{% endif %}
+{% if user_role in ('admin','reviewer') %}<a href="/analytics" >Analytics</a>
+<a href="/report" >Reports</a>{% endif %}
 <a href="/api/status" target="_blank">Status</a>
 </nav>
 <div class="container">
 <p style="margin-bottom:20px"><a href="/">Back to Dashboard</a></p>
 <div class="card">
 <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-<div><h2 style="display:inline;margin-right:12px">{{ doc.doc_id }}</h2><span class="badge badge-{{ doc.status }}">{{ doc.status|replace('_',' ') }}</span></div>
-<div>{% if doc.status in ['flagged','reviewing','extracted'] %}
+<div><h2 style="display:inline;margin-right:12px">{{ doc.doc_id }}</h2><span id="status-badge" class="badge badge-{{ doc.status }}">{{ doc.status|replace('_',' ') }}</span></div>
+<div>{% if user_role in ('admin','reviewer') and doc.status in ['flagged','reviewing','extracted'] %}
 <button class="btn btn-approve" onclick="approveDoc('{{ doc.doc_id }}')">Approve & Send to SAP</button>
 <button class="btn btn-reject" onclick="rejectDoc('{{ doc.doc_id }}')">Reject</button>
-{% endif %}</div>
+{% endif %}
+<a href="/document/{{ doc.doc_id }}/download" class="btn" style="background:#607d8b;color:#fff;text-decoration:none">Download Original</a></div>
 </div>
 <div class="card-body">
 <table style="width:auto;margin-bottom:20px">
 <tr><td style="color:#888;padding-right:30px">Type</td><td><strong>{{ doc.doc_type|replace('_',' ')|title }}</strong> ({{ doc.type_confidence }}%)</td></tr>
 <tr><td style="color:#888">Filename</td><td>{{ doc.filename }}</td></tr>
+<tr><td style="color:#888">Shipment Ref</td><td>{{ doc.shipment_ref or '—' }}</td></tr>
 <tr><td style="color:#888">Uploaded by</td><td>{{ doc.uploaded_by or '' }}</td></tr>
 <tr><td style="color:#888">Created</td><td>{{ doc.created_at }}</td></tr>
 </table></div></div>
 <div class="two-col">
+<div class="card"><div class="card-header"><h2>Original Document</h2></div><div class="card-body" style="text-align:center;min-height:400px">
+{% if preview_url %}
+{% if doc.filename and (doc.filename.lower().endswith('.pdf')) %}
+<iframe src="{{ preview_url }}" style="width:100%;height:600px;border:1px solid #e0e0e0;border-radius:4px"></iframe>
+{% elif doc.filename and (doc.filename.lower().endswith('.png') or doc.filename.lower().endswith('.jpg') or doc.filename.lower().endswith('.jpeg') or doc.filename.lower().endswith('.tiff') or doc.filename.lower().endswith('.tif') or doc.filename.lower().endswith('.webp')) %}
+<img src="{{ preview_url }}" style="max-width:100%;max-height:600px;border:1px solid #e0e0e0;border-radius:4px" alt="Document preview">
+{% else %}
+<div style="padding:60px;color:#999">
+<p style="font-size:16px;margin-bottom:12px">Preview not available for this file type</p>
+<a href="/document/{{ doc.doc_id }}/download" style="padding:10px 24px;background:#2D4285;color:#fff;border-radius:4px;text-decoration:none">Download to View</a>
+</div>
+{% endif %}
+{% else %}
+<p style="color:#999;padding:60px">No document file available</p>
+{% endif %}
+</div></div>
+<div>
 <div class="card"><div class="card-header"><h2>Extracted Fields</h2></div><div class="card-body">
 {% if fields %}<table><tr><th>Field</th><th>Value</th><th>Confidence</th><th>Reviewed</th></tr>
 {% for f in fields %}<tr>
 <td><strong>{{ f.field_name|replace('_',' ')|title }}</strong></td>
-<td><input type="text" id="field_{{ f.id }}" value="{{ f.corrected_value or f.field_value }}" onblur="updateField({{ f.id }})"></td>
+<td>{% if user_role in ('admin','reviewer') %}<input type="text" id="field_{{ f.id }}" value="{{ f.corrected_value or f.field_value }}" data-orig="{{ f.corrected_value or f.field_value }}" onblur="updateField({{ f.id }})">{% else %}<span>{{ f.corrected_value or f.field_value }}</span>{% endif %}</td>
 <td>{{ f.confidence }}%</td>
 <td>{{ 'Yes' if f.reviewed else 'No' }}</td>
 </tr>{% endfor %}</table>
 {% else %}<p style="color:#999">No fields extracted</p>{% endif %}
 </div></div>
 <div class="card"><div class="card-header"><h2>Validation Results</h2></div><div class="card-body">
-{% if validations %}<table><tr><th>Check</th><th>Result</th><th>Detail</th></tr>
+{% if validations %}<table id="validation-table"><tr><th>Check</th><th>Result</th><th>Detail</th></tr>
 {% for v in validations %}<tr>
-<td>{{ v.check_name }}</td>
+<td>{{ v.check_name|replace('_',' ')|title }}</td>
 <td>{% if v.passed %}<span style="color:#388e3c;font-weight:500">PASS</span>{% else %}<span style="color:#d32f2f;font-weight:500">FAIL</span>{% endif %}</td>
 <td>{{ v.detail or '' }}</td>
 </tr>{% endfor %}</table>
-{% else %}<p style="color:#999">No validation results</p>{% endif %}
-</div></div></div>
+{% else %}<table id="validation-table"><tr><td style="color:#999;text-align:center" colspan="3">No validation results</td></tr></table>{% endif %}
+</div></div>
+</div></div>
 <div class="card"><div class="card-header"><h2>Audit Trail</h2></div><div class="card-body">
-<table><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr>
+<table id="audit-table"><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr>
 {% for a in audit %}<tr>
 <td>{{ a.logged_at.strftime('%d %b %Y %H:%M:%S') if a.logged_at else '' }}</td>
 <td>{{ a.user_id or 'system' }}</td>

@@ -49,7 +49,7 @@ FIELD_PATTERNS = {
     "freight":           r'(?:ocean\s+freight)[:\s]+(?:USD\s*)?([\d,]+\.?\d{0,2})',
     "etd":               r'(?:ETD)[:\s]+(\d{1,2}\s+\w+\s+\d{4})',
     "eta":               r'(?:ETA)[:\s]+(\d{1,2}\s+\w+\s+\d{4})',
-    "packing_list_no":   r'(?:packing\s+list\s*n[o.]?)[:\s]+([A-Z0-9\-/]{6,30})',
+    "packing_list_no":   r'(?:packing\s+list\s*n[o.]?\.?)[:\s]+([A-Z0-9\-/]{6,30})',
     "seal_no":           r'(?:seal\s*n[o.]?)[:\s]+([A-Z0-9\-]+(?:\s*/\s*[A-Z0-9\-]+)?)',
     "customs_clearance": r'(?:customs\s*clearance)[:\s]+(\d{1,2}\s+\w+\s+\d{4})',
     "invoice_value":     r'(?:invoice\s+value)[:\s]+(?:USD\s*)?([\d,]+\.?\d{0,2})',
@@ -86,19 +86,21 @@ def extract_fields(text, filename=''):
         if wr_m2:
             fields["wh_receipt_no"] = {"value": wr_m2.group(1).strip(), "confidence": 85}
 
-    # Supplier: find clean company name on standalone line (from declaration/signature section)
-    # Exclude lines containing "Panasonic" (those are merged OCR columns)
-    sup_candidates = re.finditer(r'^((?:Shenzhen|Shanghai|Beijing|Guangzhou|Dongguan|Foshan)\s+\w[\w\s,\.]+?Co\.,?)$', text, re.IGNORECASE | re.MULTILINE)
+    # Supplier: find company name with city prefix + Co., Ltd.
+    sup_pat = r'^((?:Shenzhen|Shanghai|Beijing|Guangzhou|Dongguan|Foshan)\s+\w[\w\s,\.]+?Co\.,?\s*Ltd\.?)'
+    sup_candidates = re.finditer(sup_pat, text, re.IGNORECASE | re.MULTILINE)
     for sup_clean in sup_candidates:
         val = sup_clean.group(1).strip()
-        if 'Panasonic' in val:
-            continue  # skip merged OCR lines
-        pos = sup_clean.end()
-        next_bit = text[pos:pos+20].strip()
-        if next_bit.startswith('Ltd'):
-            val = val + ' Ltd.'
-        fields["supplier_name"] = {"value": val, "confidence": 92}
-        break
+        if 'Panasonic' not in val:
+            fields["supplier_name"] = {"value": val, "confidence": 92}
+            break
+    # Fallback: Seller/Shipper/Supplier label followed by company name on next line
+    if "supplier_name" not in fields:
+        sup_label = re.search(r'(?:Seller|Shipper|Supplier)[:\s]*\n\s*(.+?Co\.,?\s*Ltd\.?)', text, re.IGNORECASE | re.MULTILINE)
+        if sup_label:
+            val = sup_label.group(1).strip()
+            if 'Panasonic' not in val:
+                fields["supplier_name"] = {"value": val, "confidence": 85}
 
     # Buyer: find "Panasonic ... Co., Ltd."
     buy_clean = re.search(r'(Panasonic\s+Appliances\s+Vietnam\s+Co\.,?\s*Ltd\.)', text, re.IGNORECASE)
@@ -134,13 +136,11 @@ def extract_fields(text, filename=''):
         fields["container_no"] = {"value": " / ".join(containers[:4]), "confidence": 90}
 
     # Expected/Received qty from TOTALS area in warehouse receipt
-    # Cell-by-cell extraction puts each value on its own line, so look for the pattern across lines
     totals_m = re.search(r'TOTALS?.*?([\d,]{4,})\s+([\d,]{4,})', text)
     if totals_m:
         fields["expected_qty"] = {"value": totals_m.group(1).strip(), "confidence": 85}
         fields["received_qty"] = {"value": totals_m.group(2).strip(), "confidence": 85}
     else:
-        # Cell-by-cell: TOTALS\n...\n156,200\n156,180
         totals_m2 = re.search(r'TOTALS\n(?:TOTALS\n)*(\d[\d,]+)\n(\d[\d,]+)', text)
         if totals_m2:
             fields["expected_qty"] = {"value": totals_m2.group(1).strip(), "confidence": 85}
