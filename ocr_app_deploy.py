@@ -32,30 +32,30 @@ except:
     SUPPORTED_LANGS = ['eng', 'vie']
 
 FIELD_PATTERNS = {
-    "date":              r'(?:date(?:\s+of\s+issue)?|date\s+received|invoice\s+date)[:\s]*\n?\s*(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})',
-    "po_number":         r'(?:PO\s*(?:No\.?|Ref)?|Purchase\s+Order)[:\s]*\n?\s*(PO[\-][A-Z0-9\-/]{6,30})',
-    "bl_number":         r'(?:B/L\s*No\.?\s*)[:\s]*\n?\s*([A-Z0-9]{8,30})',
-    "total_amount":      r'(?:TOTAL\s+CIF\s+VALUE|TOTAL\s+CHARGES|total\s+amount)[:\s|]*\n?(?:USD\s*)?([\d,]+\.?\d{0,2})',
-    "vessel":            r'(?:vessel\s*/?\s*voyage)[:\s]*\n?\s*(.+?)(?:\s+Country|\s*$)',
-    "port_of_loading":   r'(?:port\s+of\s+loading)[:\s]*\n?\s*([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
-    "port_of_discharge": r'(?:port\s+of\s+(?:discharge|arrival)|arrival\s+port)[:\s]*\n?\s*([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
-    "gross_weight":      r'(?:gross\s*w(?:t|eight)?)[:\s]*\n?\s*([\d,]+\.?\d*\s*kg)',
-    "net_weight":        r'(?:n\.?w\.?|net\s*w(?:t|eight)?)[:\s]*\n?\s*([\d,]+\.?\d*\s*kg)',
-    "measurement":       r'(?:measurement|cbm)[:\s]*\n?\s*([\d,]+\.?\d*\s*CBM)',
+    "date":              r'(?:date(?:\s+of\s+issue)?|date\s+received|invoice\s+date|ngay(?:\s+phat\s+hanh)?|ngay\s+nhap\s+kho)[:\s]*\n?\s*(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})',
+    "po_number":         r'(?:PO\s*(?:No\.?|Ref)?|Purchase\s+Order|So\s+don\s+dat\s+hang)[:\s]*\n?\s*(PO[\-][A-Z0-9\-/]{6,30})',
+    "bl_number":         r'(?:B/L\s*No\.?\s*|So\s+van\s+don)[:\s]*\n?\s*([A-Z0-9]{8,30})',
+    "total_amount":      r'(?:TOTAL\s+CIF\s+VALUE|TOTAL\s+CHARGES|total\s+amount|Tong\s+gia\s+tri\s+CIF)[:\s|]*\n?(?:USD\s*)?([\d,]+\.?\d{0,2})',
+    "vessel":            r'(?:vessel\s*/?\s*voyage|Tau\s*/?\s*Chuyen)[:\s]*\n?\s*(.+?)(?:\s+Country|\s+Xuat\s+xu|\s*$)',
+    "port_of_loading":   r'(?:port\s+of\s+loading|Cang\s+xuat)[:\s]*\n?\s*([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
+    "port_of_discharge": r'(?:port\s+of\s+(?:discharge|arrival)|arrival\s+port|Cang\s+nhap)[:\s]*\n?\s*([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
+    "gross_weight":      r'(?:gross\s*w(?:t|eight)?|Trong\s+luong\s+ca\s+bi)[:\s]*\n?\s*([\d,]+\.?\d*\s*kg)',
+    "net_weight":        r'(?:n\.?w\.?|net\s*w(?:t|eight)?|Trong\s+luong\s+tinh)[:\s]*\n?\s*([\d,]+\.?\d*\s*kg)',
+    "measurement":       r'(?:measurement|cbm|cem)[:\s]*\n?\s*([\d,]+\.?\d*\s*(?:CBM|CEM|cbm))',
     "incoterms":         r'(?:Incoterms)[:\s]*\n?\s*([A-Z]{3}\s+[\w ]+?)(?:\n|$)',
-    "currency":          r'(?:Currency)[:\s]*\n?\s*([A-Z]{3})\s*$',
-    "payment_terms":     r'(?:Payment)[:\s]*\n?\s*(.+?)(?:\s+Incoterms|\s+FOB|\s+Currency|\n|$)',
+    "currency":          r'(?:Currency|Dong\s+tien)[:\s]*\n?\s*([A-Z]{3})\s*$',
+    "payment_terms":     r'(?:Payment|Dieu\s+khoan\s+giao\s+hang)[:\s]*\n?\s*(.+?)(?:\s+Incoterms|\s+FOB|\s+Currency|\n|$)',
     "booking_ref":       r'(?:booking\s*ref)[:\s]*\n?\s*([A-Z0-9\-]{8,30})',
     "freight":           r'(?:ocean\s+freight)[:\s]*\n?\s*(?:USD\s*)?([\d,]+\.?\d{0,2})',
     "etd":               r'(?:ETD)[:\s]*\n?\s*(\d{1,2}\s+\w+\s+\d{4})',
     "eta":               r'(?:ETA)[:\s]*\n?\s*(\d{1,2}\s+\w+\s+\d{4})',
-    "packing_list_no":   r'(?:packing\s+list\s*n[o.]?\.?)[:\s]*\n?\s*([A-Z0-9\-/]{6,30})',
-    "seal_no":           r'(?:seal\s*n[o.]?\.?)[:\s]*\n?\s*([A-Z0-9\-]+(?:\s*/\s*[A-Z0-9\-]+)?)',
-    "customs_clearance": r'(?:customs\s*clearance)[:\s]*\n?\s*(\d{1,2}\s+\w+\s+\d{4})',
+    "packing_list_no":   r'(?:packing\s+list\s*n[o.]?\.?|So\s+phieu\s+dong\s+goi)[:\s]*\n?\s*([A-Z0-9\-/]{6,30})',
+    "seal_no":           r'(?:seal\s*n[o.]?\.?|So\s+seal)[:\s]*\n?\s*([A-Z0-9\-]+(?:\s*/\s*[A-Z0-9\-]+)?)',
+    "customs_clearance": r'(?:customs\s*clearance|Thong\s+quan)[:\s]*\n?\s*(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})',
     "invoice_value":     r'(?:invoice\s+value)[:\s]*\n?\s*(?:USD\s*)?([\d,]+\.?\d{0,2})',
     "lc_number":         r'(?:L/C\s*No\.?)[:\s]*\n?\s*([A-Z0-9\-]{8,30})',
     "insurance_amount":  r'(?:Insurance(?:\s+Amount)?)[:\s]*\n?\s*(?:USD\s*)?([\d,]+\.?\d{0,2})',
-    "country_of_origin": r'(?:Country\s+of\s+Origin)[:\s]*\n?\s*([A-Za-z][A-Za-z ]{1,30})',
+    "country_of_origin": r'(?:Country\s+of\s+Origin|Xuat\s+xu\s+hang\s+hoa)[:\s]*\n?\s*([A-Za-z][A-Za-z ]{1,30})',
 }
 
 def extract_fields(text, filename=''):
@@ -103,6 +103,57 @@ def extract_fields(text, filename=''):
         if pod_fb:
             fields["port_of_discharge"] = {"value": pod_fb.group(1).strip(), "confidence": 85}
 
+    # PO number fallback: "PO No." label variant in B/L or standalone PO-XXXX
+    if "po_number" not in fields:
+        po_fb = re.search(r'(?:PO\s*No\.?)[:\s]*\n?\s*(PO[\-][A-Z0-9\-/]{6,30})', text, re.IGNORECASE | re.MULTILINE)
+        if po_fb:
+            fields["po_number"] = {"value": po_fb.group(1).strip(), "confidence": 85}
+        else:
+            po_fb2 = re.search(r'\b(PO-\d{4}-[A-Z0-9\-]+)\b', text)
+            if po_fb2:
+                fields["po_number"] = {"value": po_fb2.group(1).strip(), "confidence": 80}
+
+    # Currency fallback: extract from "TOTAL CIF VALUE: USD" or standalone "USD" near amounts
+    if "currency" not in fields:
+        cur_fb = re.search(r'(?:TOTAL\s+CIF\s+VALUE|Amount)[:\s]*\n?\s*(USD|EUR|JPY|VND)', text, re.IGNORECASE)
+        if cur_fb:
+            fields["currency"] = {"value": cur_fb.group(1).upper().strip(), "confidence": 80}
+        else:
+            # Look for currency code near price columns
+            cur_fb2 = re.search(r'(?:Unit\s+Price|Amount)\s*\(?\s*(USD|EUR|JPY|VND)\s*\)?', text, re.IGNORECASE)
+            if cur_fb2:
+                fields["currency"] = {"value": cur_fb2.group(1).upper().strip(), "confidence": 75}
+
+    # Incoterms fallback: extract from "CIF" in "TOTAL CIF VALUE" or standalone trade terms
+    if "incoterms" not in fields:
+        ict_fb = re.search(r'\b(CIF|FOB|CFR|EXW|DDP|DAP)\s+([\w ]{3,30}?)(?:\s+VALUE|\s+TOTAL|\n|$)', text, re.IGNORECASE)
+        if ict_fb:
+            fields["incoterms"] = {"value": f"{ict_fb.group(1).upper()} {ict_fb.group(2).strip()}", "confidence": 75}
+        else:
+            # Just the term itself
+            ict_fb2 = re.search(r'\b(CIF|FOB|CFR|EXW|DDP|DAP)\b', text)
+            if ict_fb2:
+                fields["incoterms"] = {"value": ict_fb2.group(1).upper(), "confidence": 70}
+
+    # Measurement/CBM fallback: look for digits + CBM/CEM pattern anywhere in text
+    if "measurement" not in fields:
+        meas_fb = re.search(r'([\d,]+\.?\d*)\s*(?:CBM|CEM|cbm)\b', text, re.IGNORECASE)
+        if meas_fb:
+            fields["measurement"] = {"value": f"{meas_fb.group(1).strip()} CBM", "confidence": 80}
+
+    # Container number fallback: handle OCR artifacts (MAEUT 738001 → MAEU7788001)
+    if "container_no" not in fields:
+        # Try with "Container No" label context (handles OCR spacing/substitution)
+        cnt_fb = re.search(r'(?:Container\s*No\.?)[:\s]*\n?\s*([A-Z]{3,5}[A-Z0-9T]?\s*\d[\s]?\d{5,7})', text, re.IGNORECASE)
+        if cnt_fb:
+            val = re.sub(r'\s+', '', cnt_fb.group(1).strip())
+            fields["container_no"] = {"value": val, "confidence": 75}
+        else:
+            # Standalone carrier prefix pattern
+            cnt_fb2 = re.search(r'\b((?:MAEU|OOLU|HDMU|COSU|MSKU|CMAU|TCLU)\d{7})\b', text)
+            if cnt_fb2:
+                fields["container_no"] = {"value": cnt_fb2.group(1).strip(), "confidence": 80}
+
     # Gross weight fallback: standalone in table cell or after "Gross Weight" header
     if "gross_weight" not in fields:
         gw_fb = re.search(r'Gross\s+W(?:t|eight|i)\s*[:\s]*\n?\s*([\d,]+\.?\d*\s*kg)', text, re.IGNORECASE | re.MULTILINE)
@@ -140,7 +191,7 @@ def extract_fields(text, filename=''):
         if inv_m1b:
             fields["invoice_number"] = {"value": inv_m1b.group(1).strip(), "confidence": 88}
         else:
-            inv_m2 = re.search(r'(?:Invoice\s*(?:No\.?|Ref\.?))[:\s]*\n?\s*([A-Z0-9][\w\-/]{5,30})', text, re.IGNORECASE | re.MULTILINE)
+            inv_m2 = re.search(r'(?:Invoice\s*(?:No\.?|Ref\.?)|So\s+hoa\s+don)[:\s]*\n?\s*([A-Z0-9][\w\-/]{5,30})', text, re.IGNORECASE | re.MULTILINE)
             if inv_m2:
                 fields["invoice_number"] = {"value": inv_m2.group(1).strip(), "confidence": 85}
             elif filename:
@@ -148,8 +199,8 @@ def extract_fields(text, filename=''):
                 if inv_m3:
                     fields["invoice_number"] = {"value": inv_m3.group(1).strip(), "confidence": 75}
 
-    # WH receipt number — handle both "WH Receipt No.: WR-..." and table-cell "WH Receipt No.\nWR-..."
-    wr_m = re.search(r'(?:WH\s*Receipt\s*No\.?|WR[\-])[:\s]*\n?\s*(WR[\-][A-Z0-9\-]+)', text, re.IGNORECASE | re.MULTILINE)
+    # WH receipt number — handle "WH Receipt No.", "So phieu nhap kho", table-cell format, standalone WR- pattern
+    wr_m = re.search(r'(?:WH\s*Receipt\s*No\.?|So\s+phieu\s+nhap\s+kho|WR[\-])[:\s]*\n?\s*(WR[\-][A-Z0-9\-]+)', text, re.IGNORECASE | re.MULTILINE)
     if wr_m:
         fields["wh_receipt_no"] = {"value": wr_m.group(1).strip(), "confidence": 90}
     else:
@@ -158,7 +209,7 @@ def extract_fields(text, filename=''):
             fields["wh_receipt_no"] = {"value": wr_m2.group(1).strip(), "confidence": 85}
 
     # Supplier: find company name with city prefix + Co., Ltd. (handle OCR artifacts: Co.. Ltd, Co. Ltd, Co., Ltd)
-    sup_pat = r'^((?:Shenzhen|Shanghai|Beijing|Guangzhou|Dongguan|Foshan|Ningbo|Xiamen|Suzhou|Hangzhou)\s+\w[\w\s,\.]+?Co\.[\.,]?\s*Ltd\.?)'
+    sup_pat = r'^((?:Shenzhen|Shanghai|Beijing|Guangzhou|Dongguan|Foshan|Ningbo|Xiamen|Suzhou|Hangzhou|Hanoi|Ha\s*Noi|Ho\s*Chi\s*Minh|Vietnam)\s+\w[\w\s,\.]+?Co\.[\.,]?\s*Ltd\.?)'
     sup_candidates = re.finditer(sup_pat, text, re.IGNORECASE | re.MULTILINE)
     for sup_clean in sup_candidates:
         val = sup_clean.group(1).strip()
@@ -169,7 +220,7 @@ def extract_fields(text, filename=''):
             break
     # Fallback: Seller/Shipper/Supplier/Exporter label followed by company name on next line
     if "supplier_name" not in fields:
-        sup_label = re.search(r'(?:Seller|Shipper|Supplier|Exporter)[^:\n]*[:\s]*\n\s*(.+?Co\.[\.,]?\s*Ltd\.?)', text, re.IGNORECASE | re.MULTILINE)
+        sup_label = re.search(r'(?:Seller|Shipper|Supplier|Exporter|Nguoi\s+xuat\s+khau|Ben\s+ban|Nha\s+cung\s+cap)[^:\n]*[:\s]*\n\s*(.+?Co\.[\.,]?\s*Ltd\.?)', text, re.IGNORECASE | re.MULTILINE)
         if sup_label:
             val = sup_label.group(1).strip()
             if 'Panasonic' not in val:
@@ -200,12 +251,12 @@ def extract_fields(text, filename=''):
     if hs_all:
         fields["hs_codes"] = {"value": ", ".join(sorted(hs_all)), "confidence": 90}
 
-    # Total packages: labeled or standalone "NNN cartons/CTNS"
-    tp = re.search(r'(?:total\s+packages|no\.?\s+of\s+packages)[:\s]+(\d[\d,]*)', text, re.IGNORECASE)
+    # Total packages: labeled or standalone "NNN cartons/CTNS/thung"
+    tp = re.search(r'(?:total\s+packages|no\.?\s+of\s+packages|Tong\s+so\s+kien)[:\s]+(\d[\d,]*)', text, re.IGNORECASE)
     if tp:
         fields["total_packages"] = {"value": tp.group(1).strip(), "confidence": 85}
     else:
-        tp2 = re.search(r'(\d[\d,]*)\s+(?:cartons|ctns|packages)\b', text, re.IGNORECASE)
+        tp2 = re.search(r'(\d[\d,]*)\s+(?:cartons|ctns|packages|thung)\b', text, re.IGNORECASE)
         if tp2:
             fields["total_packages"] = {"value": tp2.group(1).strip(), "confidence": 75}
 
@@ -232,18 +283,18 @@ def classify_document(text):
     # Score-based classification to avoid order-dependent misclassification
     scores = {'invoice': 0, 'packing_list': 0, 'bill_of_lading': 0, 'warehouse_receipt': 0}
     # Warehouse receipt (check first - most specific keywords, higher weight)
-    for k in ['warehouse receipt', 'goods received', 'nhap kho', 'wh receipt no', 'date received', 'goods received note', 'receiving party', 'inspection']:
+    for k in ['warehouse receipt', 'goods received', 'nhap kho', 'phieu nhap kho', 'wh receipt no', 'date received', 'goods received note', 'receiving party', 'inspection', 'ngay nhap kho', 'ben nhan hang', 'kiem tra chat luong']:
         if k in t: scores['warehouse_receipt'] += 25
     # Bill of lading
-    for k in ['bill of lading', 'b/l no', 'booking ref', 'place of issue', 'sea waybill', 'ocean bill']:
+    for k in ['bill of lading', 'b/l no', 'booking ref', 'place of issue', 'sea waybill', 'ocean bill', 'van don duong bien', 'so van don', 'ngay phat hanh', 'ben thong bao']:
         if k in t: scores['bill_of_lading'] += 20
     # Packing list
-    for k in ['packing list', 'carton no', 'packing list no', 'carton marking', 'shipping marks']:
+    for k in ['packing list', 'carton no', 'packing list no', 'carton marking', 'shipping marks', 'phieu dong goi', 'so phieu dong goi', 'chi tiet dong goi', 'ky hieu van chuyen']:
         if k in t: scores['packing_list'] += 20
-    # 'ctns' is weak — appears in B/L and WR too, lower weight
+    # 'ctns' and 'thung' are weak — appear in B/L and WR too, lower weight
     if 'ctns' in t: scores['packing_list'] += 10
     # Invoice
-    for k in ['commercial invoice', 'unit price', 'amount in words', 'subtotal', 'total cif value', 'proforma invoice']:
+    for k in ['commercial invoice', 'unit price', 'amount in words', 'subtotal', 'total cif value', 'proforma invoice', 'hoa don thuong mai', 'so hoa don', 'tong gia tri cif', 'chi tiet hang hoa', 'don gia']:
         if k in t: scores['invoice'] += 20
     best = max(scores, key=scores.get)
     conf = min(95, scores[best] + 40)
