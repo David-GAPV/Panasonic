@@ -35,7 +35,7 @@ FIELD_PATTERNS = {
     "date":              r'(?:date(?:\s+of\s+issue)?|date\s+received|invoice\s+date|ngay(?:\s+phat\s+hanh)?|ngay\s+nhap\s+kho)[:\s]*\n?\s*(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})',
     "po_number":         r'(?:PO\s*(?:No\.?|Ref)?|Purchase\s+Order|So\s+don\s+dat\s+hang)[:\s]*\n?\s*(PO[\-][A-Z0-9\-/]{6,30})',
     "bl_number":         r'(?:B/L\s*No\.?\s*|So\s+van\s+don)[:\s]*\n?\s*([A-Z0-9]{8,30})',
-    "total_amount":      r'(?:TOTAL\s+CIF\s+VALUE|TOTAL\s+CHARGES|total\s+amount|Tong\s+gia\s+tri\s+CIF)[:\s|]*\n?(?:USD\s*)?([\d,]+\.?\d{0,2})',
+    "total_amount":      r'(?:TOTAL\s+CIF\s+VALUE|TOTAL\s+CHARGES|total\s+amount|Tong\s+gia\s+tri\s+CI[FE])[:\s|]*\n?(?:USD\s*)?([\d,]+\.?\d{0,2})',
     "vessel":            r'(?:vessel\s*/?\s*voyage|Tau\s*/?\s*Chuyen)[:\s]*\n?\s*(.+?)(?:\s+Country|\s+Xuat\s+xu|\s*$)',
     "port_of_loading":   r'(?:port\s+of\s+loading|Cang\s+xuat)[:\s]*\n?\s*([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
     "port_of_discharge": r'(?:port\s+of\s+(?:discharge|arrival)|arrival\s+port|Cang\s+nhap)[:\s]*\n?\s*([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
@@ -60,8 +60,16 @@ FIELD_PATTERNS = {
 
 def extract_fields(text, filename=''):
     fields = {}
+    # Create ASCII-normalized version for Vietnamese label matching
+    import unicodedata
+    text_ascii = unicodedata.normalize('NFD', text)
+    text_ascii = ''.join(c for c in text_ascii if unicodedata.category(c) != 'Mn')
+    text_ascii = text_ascii.replace('đ', 'd').replace('Đ', 'D')
+    # Try patterns against both original and ASCII-normalized text
     for field, pattern in FIELD_PATTERNS.items():
         m = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        if not m:
+            m = re.search(pattern, text_ascii, re.IGNORECASE | re.MULTILINE)
         if m:
             value = m.group(1).strip()
             conf = min(95, 60 + len(value) * 2)
@@ -96,6 +104,12 @@ def extract_fields(text, filename=''):
         date_fb = re.search(r'(?:Date\s+(?:of\s+Issue|Received|Issued))\s*\n\s*(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})', text, re.IGNORECASE | re.MULTILINE)
         if date_fb:
             fields["date"] = {"value": date_fb.group(1).strip(), "confidence": 85}
+
+    # Date fallback: standalone DD/MM/YYYY or DD-MM-YYYY near top of document
+    if "date" not in fields:
+        date_dmy = re.search(r'^(\d{1,2}/\d{1,2}/\d{4})\s*$', text, re.MULTILINE)
+        if date_dmy:
+            fields["date"] = {"value": date_dmy.group(1).strip(), "confidence": 78}
 
     # Port of discharge fallback: "Arrival Port" label
     if "port_of_discharge" not in fields:
@@ -252,11 +266,11 @@ def extract_fields(text, filename=''):
         fields["hs_codes"] = {"value": ", ".join(sorted(hs_all)), "confidence": 90}
 
     # Total packages: labeled or standalone "NNN cartons/CTNS/thung"
-    tp = re.search(r'(?:total\s+packages|no\.?\s+of\s+packages|Tong\s+so\s+kien)[:\s]+(\d[\d,]*)', text, re.IGNORECASE)
+    tp = re.search(r'(?:total\s+packages|no\.?\s+of\s+packages|Tong\s+so\s+kien)[:\s]+(\d[\d,]*)', text_ascii, re.IGNORECASE)
     if tp:
         fields["total_packages"] = {"value": tp.group(1).strip(), "confidence": 85}
     else:
-        tp2 = re.search(r'(\d[\d,]*)\s+(?:cartons|ctns|packages|thung)\b', text, re.IGNORECASE)
+        tp2 = re.search(r'(\d[\d,]*)\s+(?:cartons|ctns|packages|thung)\b', text_ascii, re.IGNORECASE)
         if tp2:
             fields["total_packages"] = {"value": tp2.group(1).strip(), "confidence": 75}
 

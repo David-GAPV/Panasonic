@@ -84,7 +84,10 @@ function updateField(fid){const el=document.getElementById('field_'+fid);const v
 </div>
 {% endif %}
 {% else %}
-<p style="color:#999;padding:60px">No document file available</p>
+<div style="padding:60px;color:#999">
+<p style="font-size:16px;margin-bottom:12px">Preview not available for this file type</p>
+<a href="/document/{{ doc.doc_id }}/download" style="padding:10px 24px;background:#2D4285;color:#fff;border-radius:4px;text-decoration:none">Download to View</a>
+</div>
 {% endif %}
 </div></div>
 <div>
