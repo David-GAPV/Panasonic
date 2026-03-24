@@ -280,22 +280,28 @@ def extract_fields(text, filename=''):
 
 def classify_document(text):
     t = text.lower()
+    # Strip Vietnamese diacritics for keyword matching
+    import unicodedata
+    t_ascii = unicodedata.normalize('NFD', t)
+    t_ascii = ''.join(c for c in t_ascii if unicodedata.category(c) != 'Mn')
+    t_ascii = t_ascii.replace('đ', 'd').replace('Đ', 'D')
     # Score-based classification to avoid order-dependent misclassification
     scores = {'invoice': 0, 'packing_list': 0, 'bill_of_lading': 0, 'warehouse_receipt': 0}
     # Warehouse receipt (check first - most specific keywords, higher weight)
     for k in ['warehouse receipt', 'goods received', 'nhap kho', 'phieu nhap kho', 'wh receipt no', 'date received', 'goods received note', 'receiving party', 'inspection', 'ngay nhap kho', 'ben nhan hang', 'kiem tra chat luong']:
-        if k in t: scores['warehouse_receipt'] += 25
+        if k in t_ascii: scores['warehouse_receipt'] += 25
     # Bill of lading
     for k in ['bill of lading', 'b/l no', 'booking ref', 'place of issue', 'sea waybill', 'ocean bill', 'van don duong bien', 'so van don', 'ngay phat hanh', 'ben thong bao']:
-        if k in t: scores['bill_of_lading'] += 20
+        if k in t_ascii: scores['bill_of_lading'] += 20
     # Packing list
     for k in ['packing list', 'carton no', 'packing list no', 'carton marking', 'shipping marks', 'phieu dong goi', 'so phieu dong goi', 'chi tiet dong goi', 'ky hieu van chuyen']:
-        if k in t: scores['packing_list'] += 20
+        if k in t_ascii: scores['packing_list'] += 20
     # 'ctns' and 'thung' are weak — appear in B/L and WR too, lower weight
-    if 'ctns' in t: scores['packing_list'] += 10
+    if 'ctns' in t_ascii: scores['packing_list'] += 10
+    if 'thung' in t_ascii: scores['packing_list'] += 10
     # Invoice
-    for k in ['commercial invoice', 'unit price', 'amount in words', 'subtotal', 'total cif value', 'proforma invoice', 'hoa don thuong mai', 'so hoa don', 'tong gia tri cif', 'chi tiet hang hoa', 'don gia']:
-        if k in t: scores['invoice'] += 20
+    for k in ['commercial invoice', 'unit price', 'amount in words', 'subtotal', 'total cif value', 'proforma invoice', 'hoa don thuong mai', 'so hoa don', 'tong gia tri cif', 'chi tiet hang hoa', 'don gia', 'thanh tien']:
+        if k in t_ascii: scores['invoice'] += 20
     best = max(scores, key=scores.get)
     conf = min(95, scores[best] + 40)
     if scores[best] == 0:
