@@ -193,6 +193,7 @@ def validate_fields(fields_dict, doc_type):
         'packing_list': ['packing_list_no', 'total_packages'],
         'bill_of_lading': ['bl_number', 'vessel', 'port_of_loading', 'port_of_discharge'],
         'warehouse_receipt': ['wh_receipt_no', 'date'],
+        'certificate_of_origin': ['co_reference_no', 'supplier_name', 'buyer_name', 'country_of_origin'],
     }
     required = mandatory.get(doc_type, ['date'])
     for field in required:
@@ -371,7 +372,7 @@ def process_one_file(file, shipment_ref=None):
         with open(tmp_path, 'rb') as f:
             resp = requests.post(f"{OCR_API}/extract",
                 files={"file": (file.filename, f, file.content_type or 'application/octet-stream')},
-                data={"lang": "eng+vie"}, timeout=120)
+                data={"lang": "eng+vie"}, timeout=300)
         os.unlink(tmp_path)
         if resp.status_code == 200:
             result = resp.json()

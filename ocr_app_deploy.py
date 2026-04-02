@@ -1,9 +1,9 @@
-import os, io, json, logging, re, traceback
+import os, io, json, logging, re, traceback, base64
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import pytesseract
 from PIL import Image
-from pdf2image import convert_from_bytes
+from pdf2image import convert_from_bytes, convert_from_path
 
 try:
     from pillow_heif import register_heif_opener
@@ -18,6 +18,16 @@ try:
 except ImportError:
     HAS_DOCX = False
 
+try:
+    import boto3
+    BEDROCK_CLIENT = boto3.client("bedrock-runtime", region_name="us-east-1")
+    HAS_BEDROCK = True
+    logging.info("Bedrock client initialized")
+except Exception:
+    BEDROCK_CLIENT = None
+    HAS_BEDROCK = False
+    logging.warning("Bedrock not available")
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger(__name__)
 
@@ -31,296 +41,476 @@ try:
 except:
     SUPPORTED_LANGS = ['eng', 'vie']
 
-FIELD_PATTERNS = {
-    "date":              r'(?:date(?:\s+of\s+issue)?|date\s+received|invoice\s+date|ngay(?:\s+phat\s+hanh)?|ngay\s+nhap\s+kho)[:\s]*\n?\s*(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})',
-    "po_number":         r'(?:PO\s*(?:No\.?|Ref)?|Purchase\s+Order|So\s+don\s+dat\s+hang)[:\s]*\n?\s*(PO[\-][A-Z0-9\-/]{6,30})',
-    "bl_number":         r'(?:B/L\s*No\.?\s*|So\s+van\s+don)[:\s]*\n?\s*([A-Z0-9]{8,30})',
-    "total_amount":      r'(?:TOTAL\s+CIF\s+VALUE|TOTAL\s+CHARGES|total\s+amount|Tong\s+gia\s+tri\s+CI[FE])[:\s|]*\n?(?:USD\s*)?([\d,]+\.?\d{0,2})',
-    "vessel":            r'(?:vessel\s*/?\s*voyage|Tau\s*/?\s*Chuyen)[:\s]*\n?\s*(.+?)(?:\s+Country|\s+Xuat\s+xu|\s*$)',
-    "port_of_loading":   r'(?:port\s+of\s+loading|Cang\s+xuat)[:\s]*\n?\s*([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
-    "port_of_discharge": r'(?:port\s+of\s+(?:discharge|arrival)|arrival\s+port|Cang\s+nhap)[:\s]*\n?\s*([A-Za-z][A-Za-z0-9 ,\.]{4,60})',
-    "gross_weight":      r'(?:gross\s*w(?:t|eight)?|Trong\s+luong\s+ca\s+bi)[:\s]*\n?\s*([\d,]+\.?\d*\s*kg)',
-    "net_weight":        r'(?:n\.?w\.?|net\s*w(?:t|eight)?|Trong\s+luong\s+tinh)[:\s]*\n?\s*([\d,]+\.?\d*\s*kg)',
-    "measurement":       r'(?:measurement|cbm|cem)[:\s]*\n?\s*([\d,]+\.?\d*\s*(?:CBM|CEM|cbm))',
-    "incoterms":         r'(?:Incoterms)[:\s]*\n?\s*([A-Z]{3}\s+[\w ]+?)(?:\n|$)',
-    "currency":          r'(?:Currency|Dong\s+tien)[:\s]*\n?\s*([A-Z]{3})\s*$',
-    "payment_terms":     r'(?:Payment|Dieu\s+khoan\s+giao\s+hang)[:\s]*\n?\s*(.+?)(?:\s+Incoterms|\s+FOB|\s+Currency|\n|$)',
-    "booking_ref":       r'(?:booking\s*ref)[:\s]*\n?\s*([A-Z0-9\-]{8,30})',
-    "freight":           r'(?:ocean\s+freight)[:\s]*\n?\s*(?:USD\s*)?([\d,]+\.?\d{0,2})',
-    "etd":               r'(?:ETD)[:\s]*\n?\s*(\d{1,2}\s+\w+\s+\d{4})',
-    "eta":               r'(?:ETA)[:\s]*\n?\s*(\d{1,2}\s+\w+\s+\d{4})',
-    "packing_list_no":   r'(?:packing\s+list\s*n[o.]?\.?|So\s+phieu\s+dong\s+goi)[:\s]*\n?\s*([A-Z0-9\-/]{6,30})',
-    "seal_no":           r'(?:seal\s*n[o.]?\.?|So\s+seal)[:\s]*\n?\s*([A-Z0-9\-]+(?:\s*/\s*[A-Z0-9\-]+)?)',
-    "customs_clearance": r'(?:customs\s*clearance|Thong\s+quan)[:\s]*\n?\s*(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})',
-    "invoice_value":     r'(?:invoice\s+value)[:\s]*\n?\s*(?:USD\s*)?([\d,]+\.?\d{0,2})',
-    "lc_number":         r'(?:L/C\s*No\.?)[:\s]*\n?\s*([A-Z0-9\-]{8,30})',
-    "insurance_amount":  r'(?:Insurance(?:\s+Amount)?)[:\s]*\n?\s*(?:USD\s*)?([\d,]+\.?\d{0,2})',
-    "country_of_origin": r'(?:Country\s+of\s+Origin|Xuat\s+xu\s+hang\s+hoa)[:\s]*\n?\s*([A-Za-z][A-Za-z ]{1,30})',
-}
+CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
 
-def extract_fields(text, filename=''):
+# ---------------------------------------------------------------------------
+# Field extraction via regex (for Tesseract OCR text and DOCX text)
+# ---------------------------------------------------------------------------
+
+def extract_fields_invoice(text, filename=''):
+    """Extract fields from Invoice & Packing List (Panasonic format)."""
     fields = {}
-    # Create ASCII-normalized version for Vietnamese label matching
-    import unicodedata
-    text_ascii = unicodedata.normalize('NFD', text)
-    text_ascii = ''.join(c for c in text_ascii if unicodedata.category(c) != 'Mn')
-    text_ascii = text_ascii.replace('đ', 'd').replace('Đ', 'D')
-    # Try patterns against both original and ASCII-normalized text
-    for field, pattern in FIELD_PATTERNS.items():
-        m = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
-        if not m:
-            m = re.search(pattern, text_ascii, re.IGNORECASE | re.MULTILINE)
-        if m:
-            value = m.group(1).strip()
-            conf = min(95, 60 + len(value) * 2)
-            fields[field] = {"value": value, "confidence": conf}
 
-    # Packing list number fallback: standalone PL-XXXX pattern (OCR may lose the label in multi-column layouts)
-    if "packing_list_no" not in fields:
-        pl_fb = re.search(r'\b(PL[\-]\d{4}[\-][A-Z0-9\-]+)\b', text)
-        if pl_fb:
-            fields["packing_list_no"] = {"value": pl_fb.group(1).strip(), "confidence": 85}
-
-    # B/L number fallback: standalone B/L-like pattern (OCR may misread digits/letters)
-    if "bl_number" not in fields:
-        # Try common carrier prefixes with flexible digit matching
-        bl_fb = re.search(r'\b((?:MAEU|OOLU|HDMU|COSU|MSKU|CMAU|TCLU|MAEUS?)\d{7,12})\b', text)
-        if bl_fb:
-            fields["bl_number"] = {"value": bl_fb.group(1).strip(), "confidence": 80}
+    # Invoice number: MSV250374473 or INV-XXXX
+    m = re.search(r'Invoice\s*No\.?\s*[:\s]*\n?\s*([A-Z0-9][\w\-]{6,30})', text, re.IGNORECASE)
+    if m:
+        fields["invoice_number"] = {"value": m.group(1).strip(), "confidence": 92}
+    else:
+        m2 = re.search(r'\b(MSV\d{8,12})\b', text)
+        if m2:
+            fields["invoice_number"] = {"value": m2.group(1).strip(), "confidence": 90}
         else:
-            # Generic: 4+ uppercase letters followed by 7+ digits
-            bl_fb2 = re.search(r'\b([A-Z]{4,5}\d{7,12})\b', text)
-            if bl_fb2:
-                fields["bl_number"] = {"value": bl_fb2.group(1).strip(), "confidence": 75}
+            m3 = re.search(r'\b(INV[\-]\d{4}[\-\s][A-Z0-9\-]+)\b', text)
+            if m3:
+                fields["invoice_number"] = {"value": re.sub(r'\s+', '-', m3.group(1).strip()), "confidence": 85}
 
-    # Date fallback: standalone date near top of document (OCR may lose "Date" label)
-    if "date" not in fields:
-        date_standalone = re.search(r'^(\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4})\s*$', text, re.IGNORECASE | re.MULTILINE)
-        if date_standalone:
-            fields["date"] = {"value": date_standalone.group(1).strip(), "confidence": 80}
+    # Date: 25.03.2025 or 18 March 2025
+    m = re.search(r'(?:Date|Invoice\s+Date)[:\s]*\n?\s*(\d{1,2}[\./\-]\d{1,2}[\./\-]\d{2,4})', text, re.IGNORECASE)
+    if m:
+        fields["date"] = {"value": m.group(1).strip(), "confidence": 90}
+    else:
+        m2 = re.search(r'(?:Date)[:\s]*\n?\s*(\d{1,2}\s+\w+\s+\d{4})', text, re.IGNORECASE)
+        if m2:
+            fields["date"] = {"value": m2.group(1).strip(), "confidence": 88}
+        else:
+            m3 = re.search(r'\b(\d{1,2}[\./]\d{1,2}[\./]\d{4})\b', text)
+            if m3:
+                fields["date"] = {"value": m3.group(1).strip(), "confidence": 75}
 
-    # Date fallback: table-style "Date of Issue\n18 March 2025" or "Date Received\n21 March 2025"
-    if "date" not in fields:
-        date_fb = re.search(r'(?:Date\s+(?:of\s+Issue|Received|Issued))\s*\n\s*(\d{1,2}[\s/\-\.]\w+[\s/\-\.]\d{2,4})', text, re.IGNORECASE | re.MULTILINE)
-        if date_fb:
-            fields["date"] = {"value": date_fb.group(1).strip(), "confidence": 85}
+    # B/L number from invoice: EGLV142551220956
+    m = re.search(r'(?:Bill\s+of\s+Lading|B/?L\s*#?|BL#?|Way\s*Bill\s*No\.?)[:\s]*\n?\s*([A-Z]{4}\d{8,15})', text, re.IGNORECASE)
+    if m:
+        fields["bl_number"] = {"value": m.group(1).strip(), "confidence": 90}
+    else:
+        m2 = re.search(r'\b(EGLV\d{10,15})\b', text)
+        if not m2:
+            m2 = re.search(r'\b([A-Z]{4}\d{10,15})\b', text)
+        if m2:
+            fields["bl_number"] = {"value": m2.group(1).strip(), "confidence": 85}
 
-    # Date fallback: standalone DD/MM/YYYY or DD-MM-YYYY near top of document
-    if "date" not in fields:
-        date_dmy = re.search(r'^(\d{1,2}/\d{1,2}/\d{4})\s*$', text, re.MULTILINE)
-        if date_dmy:
-            fields["date"] = {"value": date_dmy.group(1).strip(), "confidence": 78}
+    # Shipping reference
+    m = re.search(r'Shipping\s+Refer\s*No[:\s]*\n?\s*([A-Z]{4}\s*\d{8,15})', text, re.IGNORECASE)
+    if m:
+        fields["shipping_ref"] = {"value": m.group(1).strip(), "confidence": 85}
 
-    # Port of discharge fallback: "Arrival Port" label
+    # Order number
+    m = re.search(r'Order\s*No[:\s]*\n?\s*(\d{8,15})', text, re.IGNORECASE)
+    if m:
+        fields["order_number"] = {"value": m.group(1).strip(), "confidence": 88}
+
+    # Buyer / consignee
+    m = re.search(r'(PANASONIC\s+VIETNAM\s+CO\.,?\s*LTD\.?)', text, re.IGNORECASE)
+    if m:
+        fields["buyer_name"] = {"value": m.group(1).strip(), "confidence": 92}
+
+    # Supplier / shipper
+    m = re.search(r'(PANASONIC\s+CONSUMER\s+MARKETING\s+ASIAPACIFIC)', text, re.IGNORECASE)
+    if m:
+        fields["supplier_name"] = {"value": m.group(1).strip(), "confidence": 90}
+    else:
+        # Fallback: city-prefix company
+        m2 = re.search(r'((?:Shenzhen|Shanghai|Beijing|Guangzhou|Dongguan|Foshan|Ningbo|Xiamen|Hangzhou)\s+[\w\s,\.]+?Co\.[\.,]?\s*Ltd\.?)', text, re.IGNORECASE | re.MULTILINE)
+        if m2:
+            val = re.sub(r'Co\.[\.,]*\s*Ltd', 'Co., Ltd', m2.group(1).strip())
+            fields["supplier_name"] = {"value": val, "confidence": 85}
+
+    # Vessel
+    m = re.search(r'(?:Shipped\s+per|Vessel)[:\s]*\n?\s*([A-Z][\w\s]+?(?:\d{4}[\-]\d{2,4}[A-Z]?))', text, re.IGNORECASE)
+    if m:
+        val = re.sub(r'\s+', ' ', m.group(1).strip())
+        # Clean trailing junk
+        val = re.sub(r'\s*(PANASONIC|From|ETD).*', '', val).strip()
+        if len(val) > 3:
+            fields["vessel"] = {"value": val, "confidence": 85}
+    if "vessel" not in fields:
+        m2 = re.search(r'(?:Vessel\s*/?\s*Voyage)[:\s]*\n?\s*(.+?)(?:\s+Country|\s*$)', text, re.IGNORECASE)
+        if m2:
+            fields["vessel"] = {"value": m2.group(1).strip(), "confidence": 85}
+
+    # Port of loading / destination
+    m = re.search(r'(?:From)[:\s]*\n?\s*([A-Z][A-Z\s]{2,30}?)(?:\s+ETD|\s*$)', text, re.IGNORECASE | re.MULTILINE)
+    if m:
+        fields["port_of_loading"] = {"value": m.group(1).strip(), "confidence": 85}
+    else:
+        m2 = re.search(r'(?:Port\s+of\s+Loading)[:\s]*\n?\s*([A-Za-z][\w\s,\.]{3,50})', text, re.IGNORECASE)
+        if m2:
+            fields["port_of_loading"] = {"value": m2.group(1).strip(), "confidence": 90}
+
+    m = re.search(r'(?:Destination)[:\s]*\n?\s*([A-Z][A-Z\s\.]{2,40}?)(?:\s*$|\n)', text, re.IGNORECASE | re.MULTILINE)
+    if m:
+        val = m.group(1).strip().rstrip('.')
+        if len(val) > 2:
+            fields["port_of_discharge"] = {"value": val, "confidence": 85}
     if "port_of_discharge" not in fields:
-        pod_fb = re.search(r'(?:arrival\s+port|destination\s+port|port\s+of\s+destination)[:\s]+([A-Za-z][A-Za-z0-9 ,\.]{4,60})', text, re.IGNORECASE)
-        if pod_fb:
-            fields["port_of_discharge"] = {"value": pod_fb.group(1).strip(), "confidence": 85}
+        m2 = re.search(r'(?:To)[:\s]*\n?\s*([A-Z][A-Z\s]{2,30}?)(?:\s+ETA|\s+Via|\s*$)', text, re.IGNORECASE | re.MULTILINE)
+        if m2:
+            val = m2.group(1).strip()
+            if len(val) > 2:
+                fields["port_of_discharge"] = {"value": val, "confidence": 80}
+    if "port_of_discharge" not in fields:
+        m3 = re.search(r'(?:Port\s+of\s+Discharge|Arrival\s+Port)[:\s]*\n?\s*([A-Za-z][\w\s,\.]{3,50})', text, re.IGNORECASE)
+        if m3:
+            fields["port_of_discharge"] = {"value": m3.group(1).strip(), "confidence": 90}
 
-    # PO number fallback: "PO No." label variant in B/L or standalone PO-XXXX
-    if "po_number" not in fields:
-        po_fb = re.search(r'(?:PO\s*No\.?)[:\s]*\n?\s*(PO[\-][A-Z0-9\-/]{6,30})', text, re.IGNORECASE | re.MULTILINE)
-        if po_fb:
-            fields["po_number"] = {"value": po_fb.group(1).strip(), "confidence": 85}
+    # ETD / ETA
+    for tag in ['ETD', 'ETA']:
+        m = re.search(rf'{tag}[:\s]*\n?\s*(\d{{1,2}}[\./\-]\d{{1,2}}[\./\-]\d{{2,4}})', text, re.IGNORECASE)
+        if m:
+            fields[tag.lower()] = {"value": m.group(1).strip(), "confidence": 85}
         else:
-            po_fb2 = re.search(r'\b(PO-\d{4}-[A-Z0-9\-]+)\b', text)
-            if po_fb2:
-                fields["po_number"] = {"value": po_fb2.group(1).strip(), "confidence": 80}
+            m2 = re.search(rf'{tag}[:\s]*\n?\s*(\d{{1,2}}\s+\w+\s+\d{{4}})', text, re.IGNORECASE)
+            if m2:
+                fields[tag.lower()] = {"value": m2.group(1).strip(), "confidence": 85}
 
-    # Currency fallback: extract from "TOTAL CIF VALUE: USD" or standalone "USD" near amounts
-    if "currency" not in fields:
-        cur_fb = re.search(r'(?:TOTAL\s+CIF\s+VALUE|Amount)[:\s]*\n?\s*(USD|EUR|JPY|VND)', text, re.IGNORECASE)
-        if cur_fb:
-            fields["currency"] = {"value": cur_fb.group(1).upper().strip(), "confidence": 80}
-        else:
-            # Look for currency code near price columns
-            cur_fb2 = re.search(r'(?:Unit\s+Price|Amount)\s*\(?\s*(USD|EUR|JPY|VND)\s*\)?', text, re.IGNORECASE)
-            if cur_fb2:
-                fields["currency"] = {"value": cur_fb2.group(1).upper().strip(), "confidence": 75}
+    # Container numbers: EGHU8301575, EGHU9312640 or MAEU7788001
+    containers = list(dict.fromkeys(re.findall(r'\b([A-Z]{4}\d{7})\b', text)))
+    if containers:
+        fields["container_no"] = {"value": ", ".join(containers[:6]), "confidence": 90}
 
-    # Incoterms fallback: extract from "CIF" in "TOTAL CIF VALUE" or standalone trade terms
-    if "incoterms" not in fields:
-        ict_fb = re.search(r'\b(CIF|FOB|CFR|EXW|DDP|DAP)\s+([\w ]{3,30}?)(?:\s+VALUE|\s+TOTAL|\n|$)', text, re.IGNORECASE)
-        if ict_fb:
-            fields["incoterms"] = {"value": f"{ict_fb.group(1).upper()} {ict_fb.group(2).strip()}", "confidence": 75}
-        else:
-            # Just the term itself
-            ict_fb2 = re.search(r'\b(CIF|FOB|CFR|EXW|DDP|DAP)\b', text)
-            if ict_fb2:
-                fields["incoterms"] = {"value": ict_fb2.group(1).upper(), "confidence": 70}
+    # Total amount
+    m = re.search(r'(?:TOTAL\s+AMOUNT|Grand\s+Total|TOTAL\s+CIF\s+VALUE)[^:]*?(?:USD\s*)?([\d,]+\.?\d{0,2})', text, re.IGNORECASE)
+    if m:
+        fields["total_amount"] = {"value": m.group(1).strip(), "confidence": 88}
 
-    # Measurement/CBM fallback: look for digits + CBM/CEM pattern anywhere in text
-    if "measurement" not in fields:
-        meas_fb = re.search(r'([\d,]+\.?\d*)\s*(?:CBM|CEM|cbm)\b', text, re.IGNORECASE)
-        if meas_fb:
-            fields["measurement"] = {"value": f"{meas_fb.group(1).strip()} CBM", "confidence": 80}
+    # Currency
+    m = re.search(r'\b(USD|EUR|JPY|VND|SGD)\b', text)
+    if m:
+        fields["currency"] = {"value": m.group(1), "confidence": 85}
 
-    # Container number fallback: handle OCR artifacts (MAEUT 738001 → MAEU7788001)
-    if "container_no" not in fields:
-        # Try with "Container No" label context (handles OCR spacing/substitution)
-        cnt_fb = re.search(r'(?:Container\s*No\.?)[:\s]*\n?\s*([A-Z]{3,5}[A-Z0-9T]?\s*\d[\s]?\d{5,7})', text, re.IGNORECASE)
-        if cnt_fb:
-            val = re.sub(r'\s+', '', cnt_fb.group(1).strip())
-            fields["container_no"] = {"value": val, "confidence": 75}
-        else:
-            # Standalone carrier prefix pattern
-            cnt_fb2 = re.search(r'\b((?:MAEU|OOLU|HDMU|COSU|MSKU|CMAU|TCLU)\d{7})\b', text)
-            if cnt_fb2:
-                fields["container_no"] = {"value": cnt_fb2.group(1).strip(), "confidence": 80}
-
-    # Gross weight fallback: standalone in table cell or after "Gross Weight" header
-    if "gross_weight" not in fields:
-        gw_fb = re.search(r'Gross\s+W(?:t|eight|i)\s*[:\s]*\n?\s*([\d,]+\.?\d*\s*kg)', text, re.IGNORECASE | re.MULTILINE)
-        if gw_fb:
-            fields["gross_weight"] = {"value": gw_fb.group(1).strip(), "confidence": 80}
-        else:
-            # Look for weight values (digits + kg) in cargo/particulars section
-            nw_val = fields.get("net_weight", {}).get("value", "")
-            gw_candidates = re.findall(r'([\d,]+\.?\d*\s*kg)', text, re.IGNORECASE)
-            # Pick the largest weight value as gross weight (if not already net weight)
-            best_gw = None
-            best_val = 0
-            for cand in gw_candidates:
-                if cand.strip() == nw_val.strip():
-                    continue
-                num_str = re.sub(r'[^\d.]', '', cand.replace(',', ''))
-                try:
-                    num = float(num_str)
-                    if num > best_val:
-                        best_val = num
-                        best_gw = cand.strip()
-                except:
-                    pass
-            if best_gw:
-                fields["gross_weight"] = {"value": best_gw, "confidence": 75}
-
-    # Invoice number: prioritize INV- pattern (most reliable), then Invoice No/Ref label
-    # Handle OCR artifacts: "INV-2025 V-3300" (space in VN), "INV-2025-VN-3300"
-    inv_m = re.search(r'(INV[\-]\d{4}[\-\s][A-Z]{1,4}[\-\s][\w\-]+)', text)
-    if inv_m:
-        val = re.sub(r'\s+', '-', inv_m.group(1).strip())  # normalize spaces to hyphens
-        fields["invoice_number"] = {"value": val, "confidence": 92}
+    # Gross weight
+    m = re.search(r'(?:Grs?\s*Wt|Gross\s*W(?:t|eight)?)[^:]*?[:\s]*\n?\s*([\d,]+\.?\d{3})\s*(?:KGS?|kg)', text, re.IGNORECASE)
+    if m:
+        fields["gross_weight"] = {"value": m.group(1).strip() + " KGS", "confidence": 85}
     else:
-        inv_m1b = re.search(r'(INV[\-][\w\-]+)', text)
-        if inv_m1b:
-            fields["invoice_number"] = {"value": inv_m1b.group(1).strip(), "confidence": 88}
-        else:
-            inv_m2 = re.search(r'(?:Invoice\s*(?:No\.?|Ref\.?)|So\s+hoa\s+don)[:\s]*\n?\s*([A-Z0-9][\w\-/]{5,30})', text, re.IGNORECASE | re.MULTILINE)
-            if inv_m2:
-                fields["invoice_number"] = {"value": inv_m2.group(1).strip(), "confidence": 85}
-            elif filename:
-                inv_m3 = re.search(r'(INV[\-][\w\-]+)', filename)
-                if inv_m3:
-                    fields["invoice_number"] = {"value": inv_m3.group(1).strip(), "confidence": 75}
+        # Fallback: find largest KGS value (must be > 100 to avoid product spec like ">10KG")
+        all_wt = re.findall(r'([\d,]+\.?\d{3})\s*(?:KGS|kg)', text, re.IGNORECASE)
+        if all_wt:
+            candidates = [w for w in all_wt if float(w.replace(',', '')) > 100]
+            if candidates:
+                best = max(candidates, key=lambda x: float(x.replace(',', '')))
+                fields["gross_weight"] = {"value": best + " KGS", "confidence": 75}
 
-    # WH receipt number — handle "WH Receipt No.", "So phieu nhap kho", table-cell format, standalone WR- pattern
-    wr_m = re.search(r'(?:WH\s*Receipt\s*No\.?|So\s+phieu\s+nhap\s+kho|WR[\-])[:\s]*\n?\s*(WR[\-][A-Z0-9\-]+)', text, re.IGNORECASE | re.MULTILINE)
-    if wr_m:
-        fields["wh_receipt_no"] = {"value": wr_m.group(1).strip(), "confidence": 90}
+    # Net weight
+    m = re.search(r'(?:Net\s*W(?:t|eight)?|N\.?W\.?)[^:]*?[:\s]*\n?\s*([\d,]+\.?\d*)\s*(?:KGS?|kg)', text, re.IGNORECASE)
+    if m:
+        fields["net_weight"] = {"value": m.group(1).strip() + " KGS", "confidence": 85}
+
+    # Measurement / CBM
+    m = re.search(r'(?:Measmt|Measurement|CBM)[^:]*?[:\s]*\n?\s*([\d,]+\.?\d*)\s*(?:CBM|CEM|M3|m3)?', text, re.IGNORECASE)
+    if m:
+        val = m.group(1).strip()
+        if float(val.replace(',', '')) > 0:
+            fields["measurement"] = {"value": val + " CBM", "confidence": 85}
+
+    # Total packages
+    m = re.search(r'(?:Total\s+Packages|No\.?\s+of\s+Packages)[:\s]*\n?\s*(\d[\d,]*)', text, re.IGNORECASE)
+    if m:
+        fields["total_packages"] = {"value": m.group(1).strip(), "confidence": 85}
     else:
-        wr_m2 = re.search(r'(WR-\d{4}-[A-Z]{2,4}-\d{4,6})', text)
-        if wr_m2:
-            fields["wh_receipt_no"] = {"value": wr_m2.group(1).strip(), "confidence": 85}
+        m2 = re.search(r'(\d[\d,]*)\s+(?:cartons?|ctns?|packages?|sets?)\b', text, re.IGNORECASE)
+        if m2:
+            fields["total_packages"] = {"value": m2.group(1).strip(), "confidence": 75}
 
-    # Supplier: find company name with city prefix + Co., Ltd. (handle OCR artifacts: Co.. Ltd, Co. Ltd, Co., Ltd)
-    sup_pat = r'^((?:Shenzhen|Shanghai|Beijing|Guangzhou|Dongguan|Foshan|Ningbo|Xiamen|Suzhou|Hangzhou|Hanoi|Ha\s*Noi|Ho\s*Chi\s*Minh|Vietnam)\s+\w[\w\s,\.]+?Co\.[\.,]?\s*Ltd\.?)'
-    sup_candidates = re.finditer(sup_pat, text, re.IGNORECASE | re.MULTILINE)
-    for sup_clean in sup_candidates:
-        val = sup_clean.group(1).strip()
-        if 'Panasonic' not in val:
-            # Normalize all variants: "Co.. Ltd", "Co. Ltd", "Co.,Ltd" → "Co., Ltd."
-            val = re.sub(r'Co\.[\.,]*\s*Ltd', 'Co., Ltd', val)
-            fields["supplier_name"] = {"value": val, "confidence": 92}
-            break
-    # Fallback: Seller/Shipper/Supplier/Exporter label followed by company name on next line
-    if "supplier_name" not in fields:
-        sup_label = re.search(r'(?:Seller|Shipper|Supplier|Exporter|Nguoi\s+xuat\s+khau|Ben\s+ban|Nha\s+cung\s+cap)[^:\n]*[:\s]*\n\s*(.+?Co\.[\.,]?\s*Ltd\.?)', text, re.IGNORECASE | re.MULTILINE)
-        if sup_label:
-            val = sup_label.group(1).strip()
-            if 'Panasonic' not in val:
-                val = re.sub(r'Co\.[\.,]*\s*Ltd', 'Co., Ltd', val)
-                fields["supplier_name"] = {"value": val, "confidence": 85}
+    # Description of goods
+    m = re.search(r'(?:WASHING\s+MACHINE|ELECTRONIC\s+COMPONENT|POWER\s+CONVERTER)[\w\s\(\)>\-]*', text, re.IGNORECASE)
+    if m:
+        fields["description_of_goods"] = {"value": m.group(0).strip()[:100], "confidence": 85}
+    if "description_of_goods" not in fields:
+        m2 = re.search(r'(?:Description\s+of\s+Goods)[^:]*?[:\s]*\n\s*([A-Z][\w\s\(\)>\-]+)', text, re.IGNORECASE)
+        if m2:
+            val = m2.group(1).strip()[:100]
+            if len(val) > 5 and 'Unit Price' not in val and 'Measmt' not in val:
+                fields["description_of_goods"] = {"value": val, "confidence": 80}
 
-    # Buyer: find "Panasonic ... Co., Ltd." — normalize missing comma
-    buy_clean = re.search(r'(Panasonic\s+Appliances\s+Vietnam\s+Co\.,?\s*Ltd\.)', text, re.IGNORECASE)
-    if buy_clean:
-        val = buy_clean.group(1).strip()
-        # Normalize "Co. Ltd." → "Co., Ltd."
-        val = re.sub(r'Co\.\s+Ltd', 'Co., Ltd', val)
-        fields["buyer_name"] = {"value": val, "confidence": 92}
-    else:
-        buy_m = re.search(r'(Panasonic[\w\s]+Co\.,?\s*Ltd\.?)', text, re.IGNORECASE)
-        if buy_m:
-            val = buy_m.group(1).strip()
-            val = re.sub(r'Co\.\s+Ltd', 'Co., Ltd', val)
-            fields["buyer_name"] = {"value": val, "confidence": 80}
-
-    # Tax code: Tax Code (MST): 0101248141
-    tax_m = re.search(r'(?:Tax\s*Code)[^:]*[:\s]+(\d{10,13})', text, re.IGNORECASE)
-    if tax_m:
-        fields["tax_code"] = {"value": tax_m.group(1).strip(), "confidence": 90}
-
-    # HS codes - collect all unique
-    hs_all = list(set(re.findall(r'\b\d{4}\.\d{2}\.\d{2}\b', text)))
+    # HS codes
+    hs_all = list(set(re.findall(r'\b(\d{4}\.\d{2}(?:\.\d{2})?)\b', text)))
     if hs_all:
         fields["hs_codes"] = {"value": ", ".join(sorted(hs_all)), "confidence": 90}
 
-    # Total packages: labeled or standalone "NNN cartons/CTNS/thung"
-    tp = re.search(r'(?:total\s+packages|no\.?\s+of\s+packages|Tong\s+so\s+kien)[:\s]+(\d[\d,]*)', text_ascii, re.IGNORECASE)
-    if tp:
-        fields["total_packages"] = {"value": tp.group(1).strip(), "confidence": 85}
-    else:
-        tp2 = re.search(r'(\d[\d,]*)\s+(?:cartons|ctns|packages|thung)\b', text_ascii, re.IGNORECASE)
-        if tp2:
-            fields["total_packages"] = {"value": tp2.group(1).strip(), "confidence": 75}
+    # Payment terms
+    m = re.search(r'(?:Payment|Pavment)[:\s]*\n?\s*(.+?)(?:\n|$)', text, re.IGNORECASE)
+    if m:
+        fields["payment_terms"] = {"value": m.group(1).strip()[:60], "confidence": 80}
 
-    # Container numbers - standard ISO 6346: 4 letters + 7 digits
-    containers = list(dict.fromkeys(re.findall(r'\b([A-Z]{4}\d{7})\b', text)))
-    if containers:
-        fields["container_no"] = {"value": " / ".join(containers[:4]), "confidence": 90}
+    # PO number
+    m = re.search(r'(?:PO\s*(?:No\.?|Ref)?|Purchase\s+Order)[:\s]*\n?\s*(PO[\-][A-Z0-9\-/]{6,30})', text, re.IGNORECASE)
+    if m:
+        fields["po_number"] = {"value": m.group(1).strip(), "confidence": 88}
 
-    # Expected/Received qty from TOTALS area in warehouse receipt
-    totals_m = re.search(r'TOTALS?.*?([\d,]{4,})\s+([\d,]{4,})', text)
-    if totals_m:
-        fields["expected_qty"] = {"value": totals_m.group(1).strip(), "confidence": 85}
-        fields["received_qty"] = {"value": totals_m.group(2).strip(), "confidence": 85}
+    # Incoterms
+    m = re.search(r'(?:Incoterms)[:\s]*\n?\s*([A-Z]{3}\s+[\w ]+?)(?:\n|$)', text, re.IGNORECASE)
+    if m:
+        fields["incoterms"] = {"value": m.group(1).strip(), "confidence": 85}
     else:
-        totals_m2 = re.search(r'TOTALS\n(?:TOTALS\n)*(\d[\d,]+)\n(\d[\d,]+)', text)
-        if totals_m2:
-            fields["expected_qty"] = {"value": totals_m2.group(1).strip(), "confidence": 85}
-            fields["received_qty"] = {"value": totals_m2.group(2).strip(), "confidence": 85}
+        m2 = re.search(r'\b(CIF|FOB|CFR|EXW|DDP|DAP)\b', text)
+        if m2:
+            fields["incoterms"] = {"value": m2.group(1), "confidence": 70}
+
+    # Seal numbers
+    seals = re.findall(r'(?:Seal\s*No\.?|SEAL)[:\s]*\n?\s*([A-Z0-9\-]+)', text, re.IGNORECASE)
+    if not seals:
+        seals = re.findall(r'\b(EMCU[A-Z]{2}\d{4})\b', text)
+    if seals:
+        fields["seal_no"] = {"value": ", ".join(dict.fromkeys(seals)), "confidence": 85}
+
+    # L/C number
+    m = re.search(r'L/C\s*No\.?\s*[:\s]*\n?\s*([A-Z0-9\-]{8,30})', text, re.IGNORECASE)
+    if m:
+        fields["lc_number"] = {"value": m.group(1).strip(), "confidence": 88}
+
+    # Insurance
+    m = re.search(r'Insurance(?:\s+Amount)?[:\s]*\n?\s*(?:USD\s*)?([\d,]+\.?\d{0,2})', text, re.IGNORECASE)
+    if m:
+        fields["insurance_amount"] = {"value": m.group(1).strip(), "confidence": 85}
+
+    # Country of origin
+    m = re.search(r'(?:Country\s+of\s+Origin|MADE\s+IN)\s*[:\s]*\n?\s*([A-Z][A-Za-z ]{1,30})', text, re.IGNORECASE)
+    if m:
+        fields["country_of_origin"] = {"value": m.group(1).strip(), "confidence": 85}
+
+    # Tax code
+    m = re.search(r'(?:Tax\s*Code|MST)[^:]*[:\s]+(\d{10,13})', text, re.IGNORECASE)
+    if m:
+        fields["tax_code"] = {"value": m.group(1).strip(), "confidence": 90}
 
     return fields
 
+
+def extract_fields_co(text, filename=''):
+    """Extract fields from Certificate of Origin (Form E)."""
+    fields = {}
+
+    # Reference number
+    m = re.search(r'Reference\s*No\.?\s*[:\s]*\n?\s*([A-Z0-9\[\]]{10,30})', text, re.IGNORECASE)
+    if m:
+        val = m.group(1).replace('[', '').replace(']', '').strip()
+        fields["co_reference_no"] = {"value": val, "confidence": 88}
+
+    # Exporter
+    m = re.search(r'(?:consigned\s+from|Exporter)[^)]*\)\s*\n?\s*([A-Z][\w\s\(\),\.]+?(?:CO\.\s*,?\s*LTD\.?|ASIAPACIFIC))', text, re.IGNORECASE)
+    if m:
+        fields["supplier_name"] = {"value": m.group(1).strip(), "confidence": 88}
+
+    # Consignee
+    m = re.search(r'(PANASONIC\s+VIETNAM\s+CO\.\s*,?\s*LTD\.?)', text, re.IGNORECASE)
+    if m:
+        fields["buyer_name"] = {"value": m.group(1).strip(), "confidence": 88}
+    if "buyer_name" not in fields:
+        m2 = re.search(r'(?:consigned\s+to|Consignee)[^)]*\)\s*\n?\s*([A-Z][\w\s\(\),\.]+?(?:CO\.\s*,?\s*LTD\.?|VIETNAM))', text, re.IGNORECASE)
+        if m2:
+            fields["buyer_name"] = {"value": m2.group(1).strip(), "confidence": 85}
+
+    # Vessel
+    m = re.search(r"(?:Vessel'?s?\s*name|Aircraft)[^:]*?[:\s]*\n?\s*([A-Z][\w\s\-]+?\d{3,}[\-\w]*)", text, re.IGNORECASE)
+    if m:
+        fields["vessel"] = {"value": m.group(1).strip(), "confidence": 85}
+    if "vessel" not in fields:
+        m2 = re.search(r'\b(EVER\s+CONFORM\s+\d{4}[\-\w]*)\b', text, re.IGNORECASE)
+        if m2:
+            fields["vessel"] = {"value": m2.group(1).strip(), "confidence": 90}
+
+    # Departure date
+    m = re.search(r'Departure\s+date\s*[:\s]*\n?\s*([A-Z]{3}\.?\s*\d{1,2},?\s*\d{4})', text, re.IGNORECASE)
+    if m:
+        fields["date"] = {"value": m.group(1).strip(), "confidence": 88}
+
+    # Port of discharge
+    m = re.search(r'Port\s+of\s+Discharge\s*[:\s]*\n?\s*([A-Z][\w\s,]{3,30}?)(?:\n|FROM|$)', text, re.IGNORECASE)
+    if m:
+        fields["port_of_discharge"] = {"value": m.group(1).strip().rstrip(','), "confidence": 88}
+
+    # Route: FROM ... TO ...
+    m = re.search(r'FROM\s+([A-Z][\w\s,]+?)\s+TO\s+([A-Z][\w\s,]+?)(?:\s+BY|\s*$)', text, re.IGNORECASE | re.MULTILINE)
+    if m:
+        if "port_of_loading" not in fields:
+            fields["port_of_loading"] = {"value": m.group(1).strip(), "confidence": 85}
+        if "port_of_discharge" not in fields:
+            fields["port_of_discharge"] = {"value": m.group(2).strip(), "confidence": 85}
+
+    # Invoice number and date (field 10)
+    m = re.search(r'\b(MSV\d{8,12})\b', text)
+    if m:
+        fields["invoice_number"] = {"value": m.group(1).strip(), "confidence": 90}
+    m = re.search(r'(MAR\.?\s*\d{1,2},?\s*\d{4})', text, re.IGNORECASE)
+    if m and "date" not in fields:
+        fields["date"] = {"value": m.group(1).strip(), "confidence": 80}
+
+    # HS code
+    hs = re.findall(r'(?:HS\s*CODE|IS\s*CODE)[:\s]*\n?\s*(\d{4}[\.\s]\d{2})', text, re.IGNORECASE)
+    if hs:
+        fields["hs_codes"] = {"value": ", ".join(sorted(set(h.replace(' ', '.') for h in hs))), "confidence": 88}
+
+    # Gross weight / quantity
+    m = re.search(r'(\d+)\s*SETS', text, re.IGNORECASE)
+    if m:
+        fields["total_packages"] = {"value": m.group(1).strip(), "confidence": 85}
+
+    # FOB value
+    m = re.search(r'USD[:\s]*([\d,]+\.?\s*\d{0,2})', text)
+    if m:
+        fields["total_amount"] = {"value": m.group(1).replace(' ', '').strip(), "confidence": 85}
+        fields["currency"] = {"value": "USD", "confidence": 90}
+
+    # Description
+    m = re.search(r'(?:CARTONS?\s+OF\s+)(.+?)(?:\n|$)', text, re.IGNORECASE)
+    if m:
+        fields["description_of_goods"] = {"value": m.group(1).strip()[:80], "confidence": 80}
+
+    # Country of origin
+    m = re.search(r'produced\s+in\s*\n?\s*([A-Z]{3,20})\s*\n', text, re.IGNORECASE)
+    if m and m.group(1).strip().isalpha():
+        fields["country_of_origin"] = {"value": m.group(1).strip(), "confidence": 88}
+    if "country_of_origin" not in fields:
+        m2 = re.search(r'Issued\s+in\s+(?:THE\s+)?(?:PEOPLE.S\s+REPUBLIC\s+OF\s+)?([A-Z]{3,20})\b', text, re.IGNORECASE)
+        if m2:
+            fields["country_of_origin"] = {"value": m2.group(1).strip(), "confidence": 80}
+
+    # Third party operator
+    m = re.search(r'THIRD[\-\s]PARTY\s+OPERATOR[:\s]*\n?\s*([A-Z][\w\s]+?)(?:\n\d|\n[A-Z]{3})', text, re.IGNORECASE)
+    if m:
+        fields["third_party_operator"] = {"value": m.group(1).strip(), "confidence": 80}
+
+    return fields
+
+
+def extract_fields_bl_claude(raw_bytes):
+    """Extract B/L fields using Claude Sonnet 4.6 vision (for image-based B/L forms)."""
+    if not HAS_BEDROCK:
+        return None, "Bedrock not available"
+    try:
+        images = convert_from_bytes(raw_bytes, dpi=200)
+        if not images:
+            return None, "Could not convert PDF to images"
+
+        img = images[0]
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        prompt = """Extract ALL fields from this Bill of Lading / Sea Waybill document image.
+Return a JSON object with these exact keys (use null if not found):
+- bl_number: the B/L or document number (digits only, no prefix like EGLV)
+- shipper_name: shipper/exporter company name
+- consignee_name: consignee full name and address
+- notify_party: notify party name and address
+- vessel: vessel name and voyage number
+- port_of_loading: port of loading city
+- port_of_discharge: port of discharge city
+- container_no: all container numbers comma separated (format: XXXX1234567)
+- seal_no: all seal numbers comma separated
+- description_of_goods: goods description
+- gross_weight: total gross weight with unit (KGS)
+- net_weight: total net weight with unit if available
+- measurement: total measurement in CBM
+- total_packages: number and type of packages
+- freight_terms: PREPAID or COLLECT
+- date_of_issue: date of issue
+- place_of_issue: place of issue
+- export_references: export reference number
+- service_type: service type/mode (e.g. FCL/FCL)
+- bl_type: SEA WAYBILL or BILL OF LADING
+
+Return ONLY valid JSON, no markdown fences, no explanation."""
+
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 2000,
+            "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
+                {"type": "text", "text": prompt}
+            ]}]
+        })
+
+        resp = BEDROCK_CLIENT.invoke_model(
+            modelId=CLAUDE_MODEL_ID,
+            body=body,
+            contentType="application/json"
+        )
+        result = json.loads(resp["body"].read())
+        claude_text = result["content"][0]["text"]
+
+        # Parse JSON from Claude response
+        # Strip markdown fences if present
+        claude_text = re.sub(r'^```json\s*', '', claude_text.strip())
+        claude_text = re.sub(r'\s*```$', '', claude_text.strip())
+        data = json.loads(claude_text)
+
+        # Convert to our field format
+        fields = {}
+        field_map = {
+            "bl_number": "bl_number",
+            "shipper_name": "supplier_name",
+            "consignee_name": "buyer_name",
+            "notify_party": "notify_party",
+            "vessel": "vessel",
+            "port_of_loading": "port_of_loading",
+            "port_of_discharge": "port_of_discharge",
+            "container_no": "container_no",
+            "seal_no": "seal_no",
+            "description_of_goods": "description_of_goods",
+            "gross_weight": "gross_weight",
+            "net_weight": "net_weight",
+            "measurement": "measurement",
+            "total_packages": "total_packages",
+            "freight_terms": "freight_terms",
+            "date_of_issue": "date",
+            "place_of_issue": "place_of_issue",
+            "export_references": "export_references",
+            "service_type": "service_type",
+            "bl_type": "bl_type",
+        }
+        for src_key, dst_key in field_map.items():
+            val = data.get(src_key)
+            if val and str(val).strip() and str(val).lower() != 'null':
+                fields[dst_key] = {"value": str(val).strip(), "confidence": 95}
+
+        return fields, None
+    except json.JSONDecodeError as e:
+        log.error(f"Claude JSON parse error: {e}, raw: {claude_text[:200]}")
+        return None, f"Claude response parse error: {e}"
+    except Exception as e:
+        log.error(f"Claude B/L extraction error: {traceback.format_exc()}")
+        return None, f"Claude error: {e}"
+
+
 def classify_document(text):
+    """Score-based document classification."""
     t = text.lower()
-    # Strip Vietnamese diacritics for keyword matching
-    import unicodedata
-    t_ascii = unicodedata.normalize('NFD', t)
-    t_ascii = ''.join(c for c in t_ascii if unicodedata.category(c) != 'Mn')
-    t_ascii = t_ascii.replace('đ', 'd').replace('Đ', 'D')
-    # Score-based classification to avoid order-dependent misclassification
-    scores = {'invoice': 0, 'packing_list': 0, 'bill_of_lading': 0, 'warehouse_receipt': 0}
-    # Warehouse receipt (check first - most specific keywords, higher weight)
-    for k in ['warehouse receipt', 'goods received', 'nhap kho', 'phieu nhap kho', 'wh receipt no', 'date received', 'goods received note', 'receiving party', 'inspection', 'ngay nhap kho', 'ben nhan hang', 'kiem tra chat luong']:
-        if k in t_ascii: scores['warehouse_receipt'] += 25
-    # Bill of lading
-    for k in ['bill of lading', 'b/l no', 'booking ref', 'place of issue', 'sea waybill', 'ocean bill', 'van don duong bien', 'so van don', 'ngay phat hanh', 'ben thong bao']:
-        if k in t_ascii: scores['bill_of_lading'] += 20
+    scores = {
+        'invoice': 0,
+        'packing_list': 0,
+        'bill_of_lading': 0,
+        'warehouse_receipt': 0,
+        'certificate_of_origin': 0,
+    }
+    # Certificate of Origin
+    for k in ['certificate of origin', 'form e', 'preferential tariff', 'acfta', 'asean-china free trade',
+              'products consigned from', 'origin criteria', 'certifying authority']:
+        if k in t: scores['certificate_of_origin'] += 25
+    # Bill of lading / Sea waybill
+    for k in ['bill of lading', 'sea waybill', 'b/l no', 'booking ref', 'place of issue',
+              'ocean bill', 'document no', 'shipper', 'pre-carriage', 'onward inland']:
+        if k in t: scores['bill_of_lading'] += 20
+    # Warehouse receipt
+    for k in ['warehouse receipt', 'goods received', 'nhap kho', 'wh receipt no',
+              'date received', 'goods received note', 'receiving party', 'inspection']:
+        if k in t: scores['warehouse_receipt'] += 25
     # Packing list
-    for k in ['packing list', 'carton no', 'packing list no', 'carton marking', 'shipping marks', 'phieu dong goi', 'so phieu dong goi', 'chi tiet dong goi', 'ky hieu van chuyen']:
-        if k in t_ascii: scores['packing_list'] += 20
-    # 'ctns' and 'thung' are weak — appear in B/L and WR too, lower weight
-    if 'ctns' in t_ascii: scores['packing_list'] += 10
-    if 'thung' in t_ascii: scores['packing_list'] += 10
+    for k in ['packing list', 'carton no', 'packing list no', 'carton marking', 'shipping marks']:
+        if k in t: scores['packing_list'] += 20
+    if 'ctns' in t: scores['packing_list'] += 10
     # Invoice
-    for k in ['commercial invoice', 'unit price', 'amount in words', 'subtotal', 'total cif value', 'proforma invoice', 'hoa don thuong mai', 'so hoa don', 'tong gia tri cif', 'chi tiet hang hoa', 'don gia', 'thanh tien']:
-        if k in t_ascii: scores['invoice'] += 20
+    for k in ['commercial invoice', 'invoice & packing list', 'invoice no', 'unit price',
+              'amount in words', 'subtotal', 'total cif value', 'proforma invoice',
+              'total amount', 'end of invoice']:
+        if k in t: scores['invoice'] += 20
+
     best = max(scores, key=scores.get)
     conf = min(95, scores[best] + 40)
     if scores[best] == 0:
         return 'unknown', 40
     return best, conf
+
 
 def to_rgb(img):
     if img.mode in ('RGBA', 'LA', 'PA'):
@@ -331,8 +521,9 @@ def to_rgb(img):
         return img.convert('RGB')
     return img
 
+
 def _extract_from_container(container):
-    """Extract text from paragraphs and tables in a docx container (body/header/footer)."""
+    """Extract text from paragraphs and tables in a docx container."""
     text = ''
     for p in container.paragraphs:
         if p.text.strip():
@@ -345,6 +536,7 @@ def _extract_from_container(container):
                     text += ct + '\n'
     return text
 
+
 def extract_text_from_docx(raw_bytes):
     """Extract text from a .docx file including headers and footers."""
     if not HAS_DOCX:
@@ -352,34 +544,48 @@ def extract_text_from_docx(raw_bytes):
     try:
         doc = python_docx.Document(io.BytesIO(raw_bytes))
         text = ''
-        # Extract from headers and footers first (often contain doc number, date)
         for section in doc.sections:
-            try:
-                text += _extract_from_container(section.header)
-            except:
-                pass
-            try:
-                text += _extract_from_container(section.footer)
-            except:
-                pass
-        # Extract from body
+            try: text += _extract_from_container(section.header)
+            except: pass
+            try: text += _extract_from_container(section.footer)
+            except: pass
         text += _extract_from_container(doc)
         return text
     except Exception as e:
         log.error(f"DOCX parse error: {e}")
         return None
 
+
+def is_bl_document(text, filename=''):
+    """Detect if document is a Bill of Lading (needs Claude vision)."""
+    t = text.lower() if text else ''
+    fn = filename.lower() if filename else ''
+    # Check filename hints
+    if any(x in fn for x in ['bl_', 'bl-', 'bill_of_lading', 'sea_waybill', 'b_l_', 'bol_']):
+        return True
+    # Check text content
+    bl_keywords = ['bill of lading', 'sea waybill', 'document no', 'shipper', 'consignee',
+                   'notify party', 'pre-carriage', 'ocean vessel', 'onward inland']
+    score = sum(1 for k in bl_keywords if k in t)
+    return score >= 3
+
+
+
 def process_single_file(file_obj, lang):
+    """Process a single uploaded file: classify + extract fields."""
     raw = file_obj.read()
     fname = file_obj.filename.lower()
 
-    # Handle DOCX files - extract text directly (no OCR needed)
+    # ---- DOCX: direct text extraction ----
     if fname.endswith('.docx') or fname.endswith('.doc'):
         text = extract_text_from_docx(raw)
         if text is None:
             return None, "Could not parse DOCX file. python-docx may not be installed."
         doc_type, type_conf = classify_document(text)
-        fields = extract_fields(text, file_obj.filename)
+        if doc_type == 'certificate_of_origin':
+            fields = extract_fields_co(text, file_obj.filename)
+        else:
+            fields = extract_fields_invoice(text, file_obj.filename)
         return {
             "document_id": file_obj.filename.rsplit('.', 1)[0],
             "filename": file_obj.filename,
@@ -392,11 +598,11 @@ def process_single_file(file_obj, lang):
             "full_text": text
         }, None
 
-    # Handle image/PDF files via OCR
+    # ---- PDF / Image files ----
     images = []
     try:
         if fname.endswith('.pdf'):
-            images = [to_rgb(p) for p in convert_from_bytes(raw, dpi=300)]
+            images = [to_rgb(p) for p in convert_from_bytes(raw, dpi=200)]
         else:
             img = Image.open(io.BytesIO(raw))
             images = [to_rgb(img)]
@@ -404,34 +610,51 @@ def process_single_file(file_obj, lang):
         log.error(f"Decode error for {file_obj.filename}: {traceback.format_exc()}")
         return None, f"Could not decode: {e}"
 
+    # Quick OCR pass for classification and text extraction
     full_text = ""
     pages = []
     for i, img in enumerate(images):
         try:
-            # Use PSM 3 (auto segmentation) for better multi-column/table layout detection
             cfg3 = f'--oem 3 --psm 3 -l {lang}'
-            txt3 = pytesseract.image_to_string(img, config=cfg3)
-            # Also try PSM 6 (single block) and merge unique lines for completeness
-            cfg6 = f'--oem 3 --psm 6 -l {lang}'
-            txt6 = pytesseract.image_to_string(img, config=cfg6)
-            # Merge: use PSM 3 as base, append unique non-empty lines from PSM 6
-            lines3 = set(l.strip() for l in txt3.splitlines() if l.strip())
-            extra = [l for l in txt6.splitlines() if l.strip() and l.strip() not in lines3]
-            txt = txt3
-            if extra:
-                txt += '\n' + '\n'.join(extra)
+            txt = pytesseract.image_to_string(img, config=cfg3)
             data = pytesseract.image_to_data(img, config=cfg3, output_type=pytesseract.Output.DICT)
             confs = [int(c) for c in data['conf'] if int(c) > 0]
             avg = round(sum(confs)/len(confs), 1) if confs else 0
         except Exception as e:
-            log.error(f"OCR error page {i+1} of {file_obj.filename}: {traceback.format_exc()}")
+            log.error(f"OCR error page {i+1}: {traceback.format_exc()}")
             txt = ""
             avg = 0
         full_text += txt + "\n"
         pages.append({"page": i+1, "text": txt, "avg_confidence": avg})
 
     doc_type, type_conf = classify_document(full_text)
-    fields = extract_fields(full_text, file_obj.filename)
+
+    # Check if this is a B/L that should use Claude vision
+    if doc_type == 'bill_of_lading' or is_bl_document(full_text, file_obj.filename):
+        if HAS_BEDROCK:
+            log.info(f"Using Claude vision for B/L: {file_obj.filename}")
+            fields, err = extract_fields_bl_claude(raw)
+            if fields is not None:
+                return {
+                    "document_id": file_obj.filename.rsplit('.', 1)[0],
+                    "filename": file_obj.filename,
+                    "pages": len(pages),
+                    "language": lang,
+                    "document_type": "bill_of_lading",
+                    "type_confidence": 95,
+                    "fields": fields,
+                    "page_details": pages,
+                    "full_text": full_text
+                }, None
+            else:
+                log.warning(f"Claude B/L extraction failed ({err}), falling back to Tesseract")
+
+    # Use Tesseract-based extraction for invoice, CO, packing list, etc.
+    if doc_type == 'certificate_of_origin':
+        fields = extract_fields_co(full_text, file_obj.filename)
+    else:
+        fields = extract_fields_invoice(full_text, file_obj.filename)
+
     return {
         "document_id": file_obj.filename.rsplit('.', 1)[0],
         "filename": file_obj.filename,
@@ -444,6 +667,7 @@ def process_single_file(file_obj, lang):
         "full_text": full_text
     }, None
 
+
 @app.route('/health')
 def health():
     ver = "unknown"
@@ -451,7 +675,15 @@ def health():
         ver = str(pytesseract.get_tesseract_version())
     except:
         pass
-    return jsonify({"status": "ok", "tesseract_version": ver, "languages": SUPPORTED_LANGS, "docx_support": HAS_DOCX})
+    return jsonify({
+        "status": "ok",
+        "tesseract_version": ver,
+        "languages": SUPPORTED_LANGS,
+        "docx_support": HAS_DOCX,
+        "bedrock_support": HAS_BEDROCK,
+        "claude_model": CLAUDE_MODEL_ID
+    })
+
 
 @app.route('/extract', methods=['POST'])
 def extract():
@@ -476,6 +708,7 @@ def extract():
         else:
             results.append(result)
     return jsonify({"batch": True, "count": len(results), "results": results})
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000, debug=False)
