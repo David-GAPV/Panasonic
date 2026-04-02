@@ -378,7 +378,7 @@ def extract_fields_bl_claude(raw_bytes):
     if not HAS_BEDROCK:
         return None, "Bedrock not available"
     try:
-        images = convert_from_bytes(raw_bytes, dpi=200)
+        images = convert_from_bytes(raw_bytes, dpi=200, first_page=1, last_page=1)
         if not images:
             return None, "Could not convert PDF to images"
 
@@ -600,9 +600,19 @@ def process_single_file(file_obj, lang):
 
     # ---- PDF / Image files ----
     images = []
+    total_pdf_pages = 0
     try:
         if fname.endswith('.pdf'):
-            images = [to_rgb(p) for p in convert_from_bytes(raw, dpi=200)]
+            # Convert page 1 first for quick classification
+            first_imgs = convert_from_bytes(raw, dpi=200, first_page=1, last_page=1)
+            images = [to_rgb(p) for p in first_imgs]
+            # Check total page count
+            from pdf2image import pdfinfo_from_bytes
+            try:
+                info = pdfinfo_from_bytes(raw)
+                total_pdf_pages = info.get('Pages', 1)
+            except:
+                total_pdf_pages = 1
         else:
             img = Image.open(io.BytesIO(raw))
             images = [to_rgb(img)]
@@ -628,6 +638,25 @@ def process_single_file(file_obj, lang):
         pages.append({"page": i+1, "text": txt, "avg_confidence": avg})
 
     doc_type, type_conf = classify_document(full_text)
+
+    # For non-CO, non-BL documents with multiple pages, OCR remaining pages
+    if total_pdf_pages > 1 and doc_type not in ('certificate_of_origin',) and not is_bl_document(full_text, file_obj.filename):
+        try:
+            extra_imgs = convert_from_bytes(raw, dpi=200, first_page=2, last_page=min(total_pdf_pages, 4))
+            for i, eimg in enumerate(extra_imgs):
+                eimg = to_rgb(eimg)
+                try:
+                    cfg3 = f'--oem 3 --psm 3 -l {lang}'
+                    txt = pytesseract.image_to_string(eimg, config=cfg3)
+                    data = pytesseract.image_to_data(eimg, config=cfg3, output_type=pytesseract.Output.DICT)
+                    confs = [int(c) for c in data['conf'] if int(c) > 0]
+                    avg = round(sum(confs)/len(confs), 1) if confs else 0
+                except:
+                    txt = ""; avg = 0
+                full_text += txt + "\n"
+                pages.append({"page": i+2, "text": txt, "avg_confidence": avg})
+        except Exception as e:
+            log.warning(f"Extra page OCR error: {e}")
 
     # Check if this is a B/L that should use Claude vision
     if doc_type == 'bill_of_lading' or is_bl_document(full_text, file_obj.filename):
