@@ -58,15 +58,15 @@ pre.json .key{color:#9cdcfe}pre.json .str{color:#ce9178}pre.json .num{color:#b5c
 </nav>
 <div class="container">
 <div class="tabs">
-<button class="tab active" onclick="showTab('sap-erp',this)">&#128196; SAP ERP — MIRO</button>
-<button class="tab" onclick="showTab('wms',this)">&#128230; WMS — MIGO</button>
-<button class="tab" onclick="showTab('push-log',this)">&#128203; Push Log</button>
+<button class="tab active" onclick="showTab('sap-erp',this)">SAP ERP — MIRO</button>
+<button class="tab" onclick="showTab('wms',this)">WMS — MIGO</button>
+<button class="tab" onclick="showTab('push-log',this)">Push Log</button>
 </div>
 
 <!-- TAB 1: SAP ERP MIRO (Invoice + CO Form) -->
 <div class="tab-content active" id="tab-sap-erp">
 <div class="card">
-<div class="card-header"><span class="icon">&#128196;</span><h2>SAP MM — Invoice Verification (MIRO)</h2></div>
+<div class="card-header"><h2>SAP MM — Invoice Verification (MIRO)</h2></div>
 <div class="card-body">
 <p style="color:#666;margin-bottom:16px">Approved Invoices and Certificates of Origin populate SAP MIRO entry fields for accounts payable processing.</p>
 {% if erp_entries %}
@@ -182,7 +182,7 @@ pre.json .key{color:#9cdcfe}pre.json .str{color:#ce9178}pre.json .num{color:#b5c
 <!-- TAB 2: WMS MIGO (Bill of Lading + Warehouse Receipt) -->
 <div class="tab-content" id="tab-wms">
 <div class="card">
-<div class="card-header"><span class="icon">&#128230;</span><h2>SAP MM — Goods Receipt (MIGO)</h2></div>
+<div class="card-header"><h2>SAP MM — Goods Receipt (MIGO)</h2></div>
 <div class="card-body">
 <p style="color:#666;margin-bottom:16px">Approved Bills of Lading and Warehouse Receipts populate SAP MIGO entry fields for goods receipt and inventory management.</p>
 {% if wms_entries %}
@@ -285,7 +285,7 @@ pre.json .key{color:#9cdcfe}pre.json .str{color:#ce9178}pre.json .num{color:#b5c
 
 <!-- TAB 3: Push Log -->
 <div class="tab-content" id="tab-push-log">
-<div class="card"><div class="card-header"><span class="icon">&#128203;</span><h2>SAP Push Log ({{ sap_logs|length }})</h2></div><div class="card-body">
+<div class="card"><div class="card-header"><h2>SAP Push Log ({{ sap_logs|length }})</h2></div><div class="card-body">
 {% if sap_logs %}
 <table><thead><tr><th>Time</th><th>Document</th><th>Type</th><th>Target</th><th>Payload</th></tr></thead><tbody>
 {% for log in sap_logs %}<tr>
