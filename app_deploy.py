@@ -674,11 +674,13 @@ def sap_simulate():
                 'sap_doc_no': f"5100{log_entry['id']:06d}",
                 'mat_doc_no': f"4900{log_entry['id']:06d}",
             }
-            if doc_type in ('invoice', 'packing_list'):
+            # MIRO: Invoice, Packing List, Certificate of Origin
+            if doc_type in ('invoice', 'packing_list', 'certificate_of_origin'):
                 erp_entries.append(entry)
+            # MIGO: Bill of Lading, Warehouse Receipt
             if doc_type in ('warehouse_receipt', 'bill_of_lading'):
                 wms_entries.append(entry)
-            if doc_type not in ('invoice', 'packing_list', 'warehouse_receipt', 'bill_of_lading'):
+            if doc_type not in ('invoice', 'packing_list', 'warehouse_receipt', 'bill_of_lading', 'certificate_of_origin'):
                 erp_entries.append(entry)
         conn.close()
     except:
