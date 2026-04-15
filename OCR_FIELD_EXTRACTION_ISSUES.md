@@ -54,6 +54,6 @@ OCR: `Payment: T/T 30 days after Incoterms 2020: FOB Currency: USD`
 - `templates/sap_simulation.html` — Updated with new field display sections
 
 ## Deployment
-- OCR API: `13.215.178.213` → `/opt/idp-ocr-api/app.py` → `sudo systemctl restart idp-ocr`
-- Web App: `18.142.225.22` → `/opt/idp-web/app.py` → `sudo systemctl restart idp-web`
+- Web App (unified with OCR): `13.214.12.26` → `/opt/idp-web/app.py` → `sudo systemctl restart idp-web`
+- OCR is now integrated directly into the web app using Bedrock Claude vision
 - After code deploy, must clean DB and re-upload documents for new extraction to take effect

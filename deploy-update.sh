@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-WEB_IP="18.142.225.22"
+WEB_IP="13.214.12.26"
 KEY="deploy/idp-panasonic-key.pem"
 SSH_CMD="ssh -i $KEY -o StrictHostKeyChecking=no ec2-user@$WEB_IP"
 SCP_CMD="scp -i $KEY -o StrictHostKeyChecking=no"
@@ -50,7 +50,6 @@ Environment="RDS_ENDPOINT=idp-panasonic-postgres.c9220g60mxx2.ap-southeast-1.rds
 Environment="DB_NAME=idpdb"
 Environment="DB_USER=idpadmin"
 Environment="DB_PASS=IDPPanasonic2025!"
-Environment="OCR_IP=13.215.178.213"
 Environment="S3_BUCKET=idp-panasonic-docs-853878127521"
 Environment="AWS_REGION=ap-southeast-1"
 ExecStart=/usr/bin/python3 /opt/idp-web/app.py
@@ -82,5 +81,5 @@ EOF6
 
 echo ""
 echo "=== Deployment complete ==="
-echo "HTTP:  http://18.142.225.22"
+echo "HTTP:  http://13.214.12.26"
 echo "HTTPS: https://idp.pngha.io.vn"

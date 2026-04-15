@@ -36,7 +36,7 @@ fi
 # Test upload (will fail if OCR not ready, but tests the upload endpoint)
 echo ""
 echo "Testing upload endpoint..."
-curl -X POST http://18.142.225.22/upload \
+curl -X POST http://13.214.12.26/upload \
   -F "file=@/tmp/test_invoice.pdf" \
   -w "\nHTTP Status: %{http_code}\n" \
   -s -o /tmp/upload_response.html
@@ -69,4 +69,4 @@ echo "✓ OCR API integration"
 echo "✓ Database persistence"
 echo "✓ Results display with extracted fields"
 echo ""
-echo "Access the upload page at: http://18.142.225.22/upload"
+echo "Access the upload page at: http://13.214.12.26/upload"

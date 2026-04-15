@@ -13,19 +13,21 @@
 │  │  ┌──────────────────────────────────────────────────────────────┐  │   │
 │  │  │              Public Subnet (10.0.1.0/24) — AZ: 1a           │  │   │
 │  │  │                                                              │  │   │
-│  │  │  ┌─────────────────────┐    ┌─────────────────────────┐     │  │   │
-│  │  │  │   Web EC2 (t3.micro)│    │  OCR EC2 (t3.medium)    │     │  │   │
-│  │  │  │   18.142.225.22     │    │  13.215.178.213         │     │  │   │
-│  │  │  │                     │    │                         │     │  │   │
-│  │  │  │  ┌───────────────┐  │    │  ┌───────────────────┐  │     │  │   │
-│  │  │  │  │ Nginx (443/80)│  │    │  │ Flask :8000       │  │     │  │   │
-│  │  │  │  │  SSL/TLS      │  │    │  │ Tesseract 5.5.2   │  │     │  │   │
-│  │  │  │  │  ↓ proxy      │  │    │  │ python-docx       │  │     │  │   │
-│  │  │  │  │ Flask :5000   │  │    │  │ pdf2image         │  │     │  │   │
-│  │  │  │  │  Web App      │──────→│  │ pillow-heif       │  │     │  │   │
-│  │  │  │  │  (idp-web)    │ :8000 │  │ (idp-ocr)         │  │     │  │   │
-│  │  │  │  └───────────────┘  │    │  └───────────────────┘  │     │  │   │
-│  │  │  └─────────────────────┘    └─────────────────────────┘     │  │   │
+│  │  │  ┌─────────────────────────────────────────────────────┐    │  │   │
+│  │  │  │      Unified Web + OCR EC2 (t3.micro)               │    │  │   │
+│  │  │  │      IP: 13.214.12.26                               │    │  │   │
+│  │  │  │                                                     │    │  │   │
+│  │  │  │  ┌───────────────────────────────────────────────┐  │    │  │   │
+│  │  │  │  │ Nginx (443/80) — SSL/TLS termination         │  │    │  │   │
+│  │  │  │  │      ↓ reverse proxy                         │  │    │  │   │
+│  │  │  │  │ Flask :5000 — Web App + OCR                  │  │    │  │   │
+│  │  │  │  │   - Dashboard, Upload, Review UI             │  │    │  │   │
+│  │  │  │  │   - Bedrock Claude vision (OCR)              │  │    │  │   │
+│  │  │  │  │   - DOCX parsing (python-docx)               │  │    │  │   │
+│  │  │  │  │   - PDF to image (pdf2image)                 │  │    │  │   │
+│  │  │  │  │ Systemd service: idp-web                     │  │    │  │   │
+│  │  │  │  └───────────────────────────────────────────────┘  │    │  │   │
+│  │  │  └─────────────────────────────────────────────────────┘    │  │   │
 │  │  └──────────────────────────────────────────────────────────────┘  │   │
 │  │                                                                     │   │
 │  │  ┌──────────────────────────────────────────────────────────────┐  │   │
@@ -43,13 +45,13 @@
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │                                                                             │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────────────┐   │
-│  │ S3 Bucket        │  │ SNS Topic        │  │ IAM Role               │   │
-│  │ idp-panasonic-   │  │ idp-panasonic-   │  │ idp-panasonic-ec2-role │   │
+│  │ S3 Bucket        │  │ SNS Topic        │  │ AWS Bedrock            │   │
+│  │ idp-panasonic-   │  │ idp-panasonic-   │  │ (us-east-1)            │   │
 │  │ docs-8538...     │  │ notifications    │  │                        │   │
-│  │                  │  │                  │  │ Policies:              │   │
-│  │ /uploads/        │  │ Email subscriber:│  │  S3 Full Access        │   │
-│  │  (original docs) │  │ david@g-asiapac  │  │  SNS Publish           │   │
-│  │                  │  │ .com.vn          │  │  RDS Connect           │   │
+│  │                  │  │                  │  │ Claude Sonnet 4        │   │
+│  │ /uploads/        │  │ Email subscriber:│  │ Vision OCR extraction  │   │
+│  │  (original docs) │  │ david@g-asiapac  │  │ 95%+ accuracy          │   │
+│  │                  │  │ .com.vn          │  │                        │   │
 │  └──────────────────┘  └──────────────────┘  └────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────────────┘
 
@@ -70,26 +72,21 @@
 
 ## Component Details
 
-### 1. Web Application Server (EC2 — t3.micro)
-- IP: 18.142.225.22
+### 1. Unified Web + OCR Server (EC2 — t3.micro)
+- IP: 13.214.12.26
 - OS: Amazon Linux 2023
 - Nginx reverse proxy (ports 80/443) → Flask (port 5000)
 - SSL via Let's Encrypt certbot for `idp.pngha.io.vn`
 - Systemd service: `idp-web`
-- Python 3.9, Flask, psycopg2, boto3, fpdf2
+- Python 3.9, Flask, psycopg2, boto3, fpdf2, pdf2image, python-docx
 
-### 2. OCR Processing Server (EC2 — t3.medium)
-- IP: 13.215.178.213
-- Tesseract 5.5.2 (LSTM engine, OEM 3, PSM 6, 300 DPI)
-- Languages: English + Vietnamese (eng+vie)
-- Direct DOCX parsing via python-docx (no OCR needed for DOCX)
-- HEIC/WebP support via pillow-heif
-- PDF → image conversion via pdf2image + poppler
-- Systemd service: `idp-ocr`
-- Score-based document classifier (invoice, packing_list, bill_of_lading, warehouse_receipt)
-- 20+ regex field extraction patterns
+**OCR Extraction:**
+- AWS Bedrock Claude Sonnet 4 vision for PDF/image extraction
+- Direct DOCX parsing via python-docx (no OCR needed)
+- Document-specific prompts for invoice, B/L, CO extraction
+- 30+ fields extracted per document type with 95% confidence
 
-### 3. Database (RDS PostgreSQL — db.t3.micro)
+### 2. Database (RDS PostgreSQL — db.t3.micro)
 - Endpoint: idp-panasonic-postgres.c9220g60mxx2.ap-southeast-1.rds.amazonaws.com
 - Database: `idpdb`
 - 4 tables:

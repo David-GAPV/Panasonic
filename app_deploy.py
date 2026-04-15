@@ -1,9 +1,17 @@
-import os, io, csv, json, re, hashlib, requests, tempfile, logging, functools
+import os, io, csv, json, re, hashlib, tempfile, logging, functools, base64, traceback
 from datetime import datetime
 from flask import Flask, render_template, render_template_string, request, jsonify, redirect, url_for, Response, send_file, session
 from flask_cors import CORS
 import psycopg2, psycopg2.extras
 import boto3
+from PIL import Image
+from pdf2image import convert_from_bytes
+
+try:
+    import docx as python_docx
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -29,12 +37,37 @@ def inject_user_context():
 
 DB_CFG = dict(host=os.getenv("RDS_ENDPOINT"), dbname=os.getenv("DB_NAME"),
               user=os.getenv("DB_USER"), password=os.getenv("DB_PASS"), connect_timeout=5)
-OCR_API = f"http://{os.getenv('OCR_IP')}:8000"
 S3_BUCKET = os.getenv("S3_BUCKET")
 AWS_REGION = os.getenv("AWS_REGION", "ap-southeast-1")
 SNS_TOPIC_ARN = os.getenv("SNS_TOPIC_ARN", "arn:aws:sns:ap-southeast-1:853878127521:idp-panasonic-notifications")
-s3_client = boto3.client('s3', region_name=AWS_REGION)
-sns_client = boto3.client('sns', region_name=AWS_REGION)
+
+# Use IAM role for S3/SNS (don't use credentials file)
+iam_session = boto3.Session()
+s3_client = iam_session.client('s3', region_name=AWS_REGION)
+sns_client = iam_session.client('sns', region_name=AWS_REGION)
+
+# Bedrock client with explicit credentials for Claude vision OCR
+# Credentials loaded from environment variables BEDROCK_ACCESS_KEY and BEDROCK_SECRET_KEY
+try:
+    bedrock_access_key = os.getenv('BEDROCK_ACCESS_KEY')
+    bedrock_secret_key = os.getenv('BEDROCK_SECRET_KEY')
+    if bedrock_access_key and bedrock_secret_key:
+        bedrock_session = boto3.Session(
+            aws_access_key_id=bedrock_access_key,
+            aws_secret_access_key=bedrock_secret_key,
+            region_name='us-east-1'
+        )
+        BEDROCK_CLIENT = bedrock_session.client("bedrock-runtime")
+        HAS_BEDROCK = True
+    else:
+        # Fallback to default credentials
+        BEDROCK_CLIENT = boto3.client("bedrock-runtime", region_name="us-east-1")
+        HAS_BEDROCK = True
+except Exception:
+    BEDROCK_CLIENT = None
+    HAS_BEDROCK = False
+
+CLAUDE_MODEL_ID = "us.anthropic.claude-sonnet-4-6"
 
 # --- Hardcoded users (simple auth) ---
 USERS = {
@@ -43,6 +76,298 @@ USERS = {
     "uploader": {"password_hash": hashlib.sha256("upload@IDP2025".encode()).hexdigest(), "role": "uploader", "name": "Uploader"},
     "david":    {"password_hash": hashlib.sha256("david@IDP2025".encode()).hexdigest(), "role": "admin", "name": "David"},
 }
+
+# ============================================================
+# OCR EXTRACTION (Bedrock Claude Vision)
+# ============================================================
+
+PROMPT_INVOICE = """Extract ALL fields from this Invoice & Packing List document. Return a JSON object.
+Extract every field you can see. Use null if a field is not found. Do NOT include page numbers.
+
+Required keys:
+- invoice_number, date, time, supplier_name, buyer_name, buyer_address, accountee, consignee
+- shipping_ref, bl_number, order_number, vessel, port_of_loading, port_of_discharge, destination
+- etd, eta, payment_terms, currency, container_no, seal_no
+- total_amount (GRAND TOTAL), total_packages, total_net_weight, total_gross_weight, total_measurement
+- country_of_origin, remarks, amount_in_words
+
+Return ONLY valid JSON, no markdown fences, no explanation."""
+
+PROMPT_BL = """Extract ALL fields from this Bill of Lading / Sea Waybill document image.
+Return a JSON object. Use null if a field is not found.
+
+Required keys:
+- bl_number, shipper_name, consignee_name, notify_party, vessel, port_of_loading, port_of_discharge
+- container_no, seal_no, total_packages, description_of_goods, gross_weight, measurement
+- date_of_issue, place_of_issue, freight_terms, bl_type
+
+Return ONLY valid JSON, no markdown fences, no explanation."""
+
+PROMPT_CO = """Extract ALL fields from this Certificate of Origin (Form E) document image.
+Return a JSON object. Use null if a field is not found.
+
+Required keys:
+- co_reference_no, exporter_name, exporter_address, consignee_name, consignee_address
+- departure_date, vessel, port_of_loading, port_of_discharge
+- description_of_goods, hs_codes, origin_criteria, total_packages, total_amount, currency
+- invoice_number, invoice_date, country_of_origin
+
+Return ONLY valid JSON, no markdown fences, no explanation."""
+
+
+def extract_fields_claude(raw_bytes, prompt, filename=''):
+    """Extract fields from a PDF/image using Claude Sonnet vision."""
+    if not HAS_BEDROCK:
+        return None, "Bedrock not available"
+    try:
+        if filename.lower().endswith('.pdf'):
+            images = convert_from_bytes(raw_bytes, dpi=200, first_page=1, last_page=1)
+            if not images:
+                return None, "Could not convert PDF to images"
+            img = images[0]
+        else:
+            img = Image.open(io.BytesIO(raw_bytes))
+
+        if img.mode in ('RGBA', 'LA', 'PA'):
+            bg = Image.new('RGB', img.size, (255,255,255))
+            bg.paste(img, mask=img.split()[-1])
+            img = bg
+        elif img.mode != 'RGB':
+            img = img.convert('RGB')
+
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        img_b64 = base64.b64encode(buf.getvalue()).decode()
+
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 4000,
+            "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
+                {"type": "text", "text": prompt}
+            ]}]
+        })
+
+        resp = BEDROCK_CLIENT.invoke_model(
+            modelId=CLAUDE_MODEL_ID, body=body, contentType="application/json"
+        )
+        result = json.loads(resp["body"].read())
+        claude_text = result["content"][0]["text"]
+        claude_text = re.sub(r'^```json\s*', '', claude_text.strip())
+        claude_text = re.sub(r'\s*```$', '', claude_text.strip())
+        data = json.loads(claude_text)
+
+        fields = {}
+        for key, val in data.items():
+            if val is None or str(val).strip() == '' or str(val).lower() == 'null':
+                continue
+            if isinstance(val, list):
+                if key == 'line_items' and val:
+                    fields["line_item_count"] = {"value": str(len(val)), "confidence": 95}
+                continue
+            if isinstance(val, bool):
+                val = "Yes" if val else "No"
+            fields[key] = {"value": str(val).strip(), "confidence": 95}
+
+        return fields, None
+    except json.JSONDecodeError as e:
+        log.error(f"Claude JSON parse error: {e}")
+        return None, f"Claude response parse error: {e}"
+    except Exception as e:
+        log.error(f"Claude extraction error: {traceback.format_exc()}")
+        return None, f"Claude error: {e}"
+
+
+def extract_fields_claude_multipage(raw_bytes, prompt, filename='', max_pages=2):
+    """Extract fields from a multi-page PDF using Claude vision."""
+    if not HAS_BEDROCK:
+        return None, "Bedrock not available"
+    try:
+        images = convert_from_bytes(raw_bytes, dpi=200, first_page=1, last_page=max_pages)
+        if not images:
+            return None, "Could not convert PDF to images"
+
+        content = []
+        for img in images:
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=85)
+            img_b64 = base64.b64encode(buf.getvalue()).decode()
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}})
+
+        content.append({"type": "text", "text": prompt})
+
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 4000,
+            "messages": [{"role": "user", "content": content}]
+        })
+
+        resp = BEDROCK_CLIENT.invoke_model(
+            modelId=CLAUDE_MODEL_ID, body=body, contentType="application/json"
+        )
+        result = json.loads(resp["body"].read())
+        claude_text = result["content"][0]["text"]
+        claude_text = re.sub(r'^```json\s*', '', claude_text.strip())
+        claude_text = re.sub(r'\s*```$', '', claude_text.strip())
+        data = json.loads(claude_text)
+
+        fields = {}
+        for key, val in data.items():
+            if val is None or str(val).strip() == '' or str(val).lower() == 'null':
+                continue
+            if isinstance(val, list):
+                if key == 'line_items' and val:
+                    fields["line_item_count"] = {"value": str(len(val)), "confidence": 95}
+                continue
+            if isinstance(val, bool):
+                val = "Yes" if val else "No"
+            fields[key] = {"value": str(val).strip(), "confidence": 95}
+
+        return fields, None
+    except json.JSONDecodeError as e:
+        log.error(f"Claude JSON parse error: {e}")
+        return None, f"Claude response parse error: {e}"
+    except Exception as e:
+        log.error(f"Claude extraction error: {traceback.format_exc()}")
+        return None, f"Claude error: {e}"
+
+
+def classify_from_filename(filename):
+    """Quick classification from filename hints."""
+    fn = filename.lower()
+    if any(x in fn for x in ['bl_', 'bl-', 'bill_of_lading', 'sea_waybill', 'b_l_', 'bol_']):
+        return 'bill_of_lading'
+    if any(x in fn for x in ['co_', 'co-', 'certificate', 'form_e', 'form e']):
+        return 'certificate_of_origin'
+    if any(x in fn for x in ['inv_', 'inv-', 'invoice']):
+        return 'invoice'
+    if any(x in fn for x in ['pl_', 'packing']):
+        return 'packing_list'
+    if any(x in fn for x in ['wr_', 'warehouse', 'receipt']):
+        return 'warehouse_receipt'
+    return None
+
+
+def extract_text_from_docx(raw_bytes):
+    """Extract text from DOCX file."""
+    if not HAS_DOCX:
+        return None
+    try:
+        doc = python_docx.Document(io.BytesIO(raw_bytes))
+        text = ''
+        for p in doc.paragraphs:
+            if p.text.strip():
+                text += p.text + '\n'
+        for t in doc.tables:
+            for row in t.rows:
+                for cell in row.cells:
+                    ct = cell.text.strip()
+                    if ct:
+                        text += ct + '\n'
+        return text
+    except Exception as e:
+        log.error(f"DOCX parse error: {e}")
+        return None
+
+
+def classify_document(text):
+    """Score-based document classification from text."""
+    t = text.lower()
+    scores = {
+        'invoice': 0, 'packing_list': 0, 'bill_of_lading': 0,
+        'warehouse_receipt': 0, 'certificate_of_origin': 0,
+    }
+    for k in ['certificate of origin', 'form e', 'preferential tariff', 'acfta', 'origin criteria']:
+        if k in t: scores['certificate_of_origin'] += 25
+    for k in ['bill of lading', 'sea waybill', 'b/l no', 'notify party']:
+        if k in t: scores['bill_of_lading'] += 20
+    for k in ['warehouse receipt', 'goods received', 'wh receipt no']:
+        if k in t: scores['warehouse_receipt'] += 25
+    for k in ['packing list', 'carton no', 'packing list no']:
+        if k in t: scores['packing_list'] += 20
+    for k in ['commercial invoice', 'invoice & packing list', 'invoice no', 'unit price', 'total amount']:
+        if k in t: scores['invoice'] += 20
+    best = max(scores, key=scores.get)
+    conf = min(95, scores[best] + 40)
+    return (best, conf) if scores[best] > 0 else ('unknown', 40)
+
+
+def extract_fields_regex(text, filename=''):
+    """Fallback regex extraction for DOCX."""
+    fields = {}
+    m = re.search(r'\b(MSV\d{8,12})\b', text) or re.search(r'\b(INV[\-]\d{4}[\-\s][A-Z0-9\-]+)\b', text)
+    if m: fields["invoice_number"] = {"value": re.sub(r'\s+', '-', m.group(1).strip()), "confidence": 90}
+    m = re.search(r'(?:Date)[:\s]*\n?\s*(\d{1,2}[\./\-]\d{1,2}[\./\-]\d{4})', text, re.I)
+    if m: fields["date"] = {"value": m.group(1).strip(), "confidence": 85}
+    m = re.search(r'(PANASONIC\s+VIETNAM\s+CO\.\s*,?\s*LTD\.?)', text, re.I)
+    if m: fields["buyer_name"] = {"value": m.group(1).strip(), "confidence": 90}
+    m = re.search(r'\b([A-Z]{4}\d{10,15})\b', text)
+    if m: fields["bl_number"] = {"value": m.group(1).strip(), "confidence": 85}
+    containers = list(dict.fromkeys(re.findall(r'\b([A-Z]{4}\d{7})\b', text)))
+    if containers: fields["container_no"] = {"value": ", ".join(containers[:6]), "confidence": 88}
+    return fields
+
+
+def ocr_extract(raw_bytes, filename, lang='eng+vie'):
+    """Main OCR extraction function - uses Claude Bedrock for PDFs/images, regex for DOCX."""
+    fname_lower = filename.lower()
+
+    # DOCX: direct text extraction
+    if fname_lower.endswith('.docx') or fname_lower.endswith('.doc'):
+        text = extract_text_from_docx(raw_bytes)
+        if text is None:
+            return None, "Could not parse DOCX file."
+        doc_type, type_conf = classify_document(text)
+        fields = extract_fields_regex(text, filename)
+        return {
+            "document_id": filename.rsplit('.', 1)[0],
+            "filename": filename,
+            "pages": 1, "language": lang,
+            "document_type": doc_type, "type_confidence": type_conf,
+            "fields": fields,
+        }, None
+
+    # PDF / Image: use Claude Bedrock
+    if not HAS_BEDROCK:
+        return None, "Bedrock not available for PDF/image extraction"
+
+    doc_type = classify_from_filename(filename)
+    if doc_type is None:
+        doc_type = 'invoice'  # default
+
+    if doc_type == 'bill_of_lading':
+        prompt = PROMPT_BL
+        fields, err = extract_fields_claude(raw_bytes, prompt, filename)
+    elif doc_type == 'certificate_of_origin':
+        prompt = PROMPT_CO
+        fields, err = extract_fields_claude(raw_bytes, prompt, filename)
+    elif doc_type == 'invoice':
+        prompt = PROMPT_INVOICE
+        fields, err = extract_fields_claude_multipage(raw_bytes, prompt, filename, max_pages=2)
+    else:
+        prompt = PROMPT_INVOICE
+        fields, err = extract_fields_claude(raw_bytes, prompt, filename)
+
+    if fields is not None:
+        try:
+            from pdf2image import pdfinfo_from_bytes
+            info = pdfinfo_from_bytes(raw_bytes)
+            num_pages = info.get('Pages', 1)
+        except:
+            num_pages = 1
+
+        return {
+            "document_id": filename.rsplit('.', 1)[0],
+            "filename": filename,
+            "pages": num_pages, "language": lang,
+            "document_type": doc_type,
+            "type_confidence": 95,
+            "fields": fields,
+        }, None
+    else:
+        return None, err or "Extraction failed"
 
 def get_db():
     return psycopg2.connect(**DB_CFG)
@@ -369,13 +694,12 @@ def process_one_file(file, shipment_ref=None):
             tmp_path = tmp.name
         s3_key = f"uploads/{datetime.now().strftime('%Y%m%d%H%M%S')}_{file.filename}"
         s3_client.upload_file(tmp_path, S3_BUCKET, s3_key)
+        # Local OCR extraction using Bedrock Claude
         with open(tmp_path, 'rb') as f:
-            resp = requests.post(f"{OCR_API}/extract",
-                files={"file": (file.filename, f, file.content_type or 'application/octet-stream')},
-                data={"lang": "eng+vie"}, timeout=300)
+            raw_bytes = f.read()
         os.unlink(tmp_path)
-        if resp.status_code == 200:
-            result = resp.json()
+        result, ocr_error = ocr_extract(raw_bytes, file.filename, lang='eng+vie')
+        if result is not None:
             conn = get_db()
             cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             # Always create a unique doc_id so re-uploads of same filename create new records
@@ -449,10 +773,9 @@ def process_one_file(file, shipment_ref=None):
             conn.commit(); conn.close()
             return result, None
         else:
-            return None, f"OCR API error: {resp.status_code} - {resp.text[:200]}"
-    except requests.exceptions.ConnectionError:
-        return None, "OCR API not reachable. Service may still be starting."
+            return None, f"OCR extraction failed: {ocr_error}"
     except Exception as e:
+        log.error(f"process_one_file error: {traceback.format_exc()}")
         return None, f"Error: {str(e)}"
 
 @app.route("/upload", methods=["GET", "POST"])

@@ -1,5 +1,5 @@
 #!/bin/bash
-ssh -i deploy/idp-panasonic-key.pem -o StrictHostKeyChecking=no ec2-user@18.142.225.22 'sudo bash -s' <<'REMOTE'
+ssh -i deploy/idp-panasonic-key.pem -o StrictHostKeyChecking=no ec2-user@13.214.12.26 'sudo bash -s' <<'REMOTE'
 # Move logos
 mkdir -p /opt/idp-web/static/images
 mv /tmp/*.webp /tmp/*.jpg /opt/idp-web/static/images/ 2>/dev/null || true

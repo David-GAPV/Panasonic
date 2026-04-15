@@ -2,7 +2,7 @@
 # Add human review/approval workflow and SAP simulation
 set -e
 
-WEB_IP="18.142.225.22"
+WEB_IP="13.214.12.26"
 KEY="deploy/idp-panasonic-key.pem"
 
 echo "=== Adding Review Workflow & SAP Integration ==="
