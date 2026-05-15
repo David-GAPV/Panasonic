@@ -5,7 +5,8 @@ Intelligent Document Processing system for Panasonic Appliances Vietnam Co., Ltd
 ## Live System
 
 **URL**: https://idp.pngha.io.vn  
-**Status**: ✅ Operational (HTTPS, SSL via Let's Encrypt)
+**Status**: ✅ Operational (HTTPS, SSL via Let's Encrypt)  
+**Region**: ap-southeast-2 (Sydney)
 
 ## Overview
 
@@ -13,13 +14,15 @@ Automates the processing of import/export trade documents — Commercial Invoice
 
 ## Features
 
-- OCR extraction via AWS Bedrock Claude Sonnet vision (95%+ accuracy on scanned PDFs)
+- OCR extraction via AWS Bedrock Claude Sonnet 4.6 vision (95%+ accuracy on scanned PDFs)
 - Direct DOCX text parsing with regex field extraction
 - Score-based document classification (invoice, packing list, B/L, CO, warehouse receipt)
+- Table-cell-based BL extraction (understands pre-printed form grid layout)
 - Confidence threshold auto-flagging (< 70%)
-- Mandatory field validation per document type
+- Mandatory field validation per document type (with field alias support across doc types)
 - Reference data validation against master tables (suppliers, HS codes, ports)
-- Cross-document verification within user-defined shipment groups (11 overlapping fields)
+- Cross-document verification with smart normalization (port names, amounts, vessel names, company names)
+- Field aliases for cross-verify (supplier_name ↔ exporter_name ↔ shipper_exporter, etc.)
 - Auto-revalidation on field edit (mandatory + reference + cross-doc checks re-run live)
 - Human review workflow with side-by-side original document and extracted fields
 - Inline field editing with audit trail (old → new value logged, no page reload)
@@ -39,7 +42,7 @@ Automates the processing of import/export trade documents — Commercial Invoice
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                          AWS Cloud — ap-southeast-1                        │
+│                          AWS Cloud — ap-southeast-2 (Sydney)              │
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                    VPC: idp-panasonic-vpc (10.0.0.0/16)            │   │
@@ -49,7 +52,7 @@ Automates the processing of import/export trade documents — Commercial Invoice
 │  │  │                                                              │  │   │
 │  │  │  ┌─────────────────────────────────────────────────────┐    │  │   │
 │  │  │  │         Unified Web + OCR EC2 (t3.micro)            │    │  │   │
-│  │  │  │         IP: 13.214.12.26                            │    │  │   │
+│  │  │  │         IP: 54.253.126.112 (EIP)                   │    │  │   │
 │  │  │  │                                                     │    │  │   │
 │  │  │  │  Nginx (443/80) → Flask (:5000)                    │    │  │   │
 │  │  │  │  - Web UI (dashboard, upload, review)              │    │  │   │
@@ -74,7 +77,7 @@ Automates the processing of import/export trade documents — Commercial Invoice
 │                                                                             │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌────────────────────────┐   │
 │  │ S3 Bucket        │  │ SNS Topic        │  │ AWS Bedrock            │   │
-│  │ Document storage │  │ Email alerts on  │  │ Claude Sonnet 4        │   │
+│  │ Document storage │  │ Email alerts on  │  │ Claude Sonnet 4.6      │   │
 │  │ /uploads/ prefix │  │ flag/approve/    │  │ Vision OCR extraction  │   │
 │  │ Versioning on    │  │ reject/mismatch  │  │ (us-east-1)            │   │
 │  └──────────────────┘  └──────────────────┘  └────────────────────────┘   │
@@ -112,10 +115,16 @@ Automates the processing of import/export trade documents — Commercial Invoice
 ## Validation Pipeline
 
 1. **Confidence threshold** — Fields below 70% confidence auto-flag the document
-2. **Mandatory field check** — Per document type (e.g. invoice requires invoice_number, date, total_amount, supplier_name)
+2. **Mandatory field check** — Per document type with alias support (e.g. CO's `exporter_name` satisfies `supplier_name` requirement)
 3. **Format validation** — Date formats, numeric amounts, invoice number patterns
 4. **Reference data validation** — Supplier name, HS codes, ports checked against master tables
-5. **Cross-document verification** — 11 overlapping fields compared within the same shipment_ref group
+5. **Cross-document verification** — Fields compared within the same shipment_ref group with smart normalization:
+   - Amounts: numeric comparison (`77596.8` == `77596.80`)
+   - Ports: strip country suffix (`SHANGHAI, CHINA` == `SHANGHAI`)
+   - Vessels: normalize separators and strip carrier codes
+   - Names: strip emails, normalize punctuation, partial containment match
+   - Containers: set-based comparison (subset = match)
+   - Field aliases: `supplier_name` ↔ `exporter_name` ↔ `shipper_exporter`, `buyer_name` ↔ `consignee` ↔ `consignee_name`, `vessel` ↔ `ocean_vessel_voy_no`, `bl_number` ↔ `document_no`
 
 All validations re-run automatically when a field is edited.
 
@@ -134,6 +143,7 @@ Web App → Save to S3 → OCR Extraction (local)
         │      PDF/Image → Bedrock Claude vision
         │      classify_document() → type + confidence
         │      extract_fields() → 30+ fields per doc type
+        │              (BL: table-cell-based layout extraction)
         │         │
         │    ◄────┘ Extraction result
         ▼
@@ -222,7 +232,7 @@ sudo journalctl -u idp-web -f
 
 - Python 3.9, Flask
 - Nginx (reverse proxy + SSL termination)
-- AWS Bedrock Claude Sonnet 4 (vision OCR)
+- AWS Bedrock Claude Sonnet 4.6 (vision OCR)
 - PostgreSQL 16.13 (RDS)
 - AWS: EC2, RDS, S3, SNS, Bedrock, IAM, VPC
 - Let's Encrypt / certbot
@@ -231,5 +241,5 @@ sudo journalctl -u idp-web -f
 ---
 
 Built for Panasonic Appliances Vietnam Co., Ltd. — Team 07  
-Region: ap-southeast-1 (Singapore)  
-Last Updated: April 15, 2026
+Region: ap-southeast-2 (Sydney)  
+Last Updated: May 16, 2026
