@@ -94,12 +94,66 @@ Required keys:
 Return ONLY valid JSON, no markdown fences, no explanation."""
 
 PROMPT_BL = """Extract ALL fields from this Bill of Lading / Sea Waybill document image.
-Return a JSON object. Use null if a field is not found.
 
-Required keys:
-- bl_number, shipper_name, consignee_name, notify_party, vessel, port_of_loading, port_of_discharge
-- container_no, seal_no, total_packages, description_of_goods, gross_weight, measurement
-- date_of_issue, place_of_issue, freight_terms, bl_type
+IMPORTANT LAYOUT CONTEXT:
+This is a PRE-PRINTED TABLE FORM. The form has fixed grid cells with field labels printed in small text
+at the top-left corner of each cell. The actual values are printed/typed INTO the cell area below the label.
+When a value is too long, it wraps to multiple lines but ALL lines within the same cell boundary belong
+to that SINGLE field. Determine which field a line belongs to by checking which cell (bounded by grid lines)
+contains it — look at the column starting from the LEFT edge of that text.
+
+CRITICAL RULES:
+1. Extract the COMPLETE content of each cell exactly as printed — do NOT split a cell's content into multiple fields.
+2. Do NOT add carrier prefixes or modify values. If Document No. shows "142551220956", return exactly that.
+3. Field (18) Container/Seal: return ALL lines in that cell as-is, format: "CONTAINER / TYPE / SEAL" per line.
+4. Field (20) Description of Goods: return the ENTIRE cell content including emails, shipping terms, freight notes — everything in that cell belongs to this one field.
+5. Field (33) Laden on Board: return the COMPLETE text in that cell (date, vessel, port).
+6. If a cell is empty/blank, return null for that field.
+
+The form has numbered fields (2) through (33) arranged in a grid layout:
+- LEFT column: (2) Shipper, (3) Consignee, (4) Notify Party
+- RIGHT column: (5) Document No., (6) Export References, (7) Forwarding Agent, (8) Point of Origin, (9) Also Notify
+- TRANSPORT row: (12) Pre-carriage, (13) Place of Receipt, (14) Vessel, (15) Port of Loading, (16) Port of Discharge, (17) Place of Delivery
+- CARGO TABLE: (18) Container/Seal, (19) Packages, (20) Description, (21) Measurement/Weight
+- FOOTER: (22) Total containers, (23) Declared value, (24) Freight, (25)-(33) Issue details
+
+Return a JSON object. Use null for empty/blank fields.
+
+Required keys (use these EXACT key names):
+- carrier: carrier company name from header/logo (e.g. "EVERGREEN LINE")
+- document_type_label: document type from header (e.g. "SEA WAYBILL - NON-NEGOTIABLE")
+- shipper_exporter: field (2) — full content of Shipper/Exporter cell
+- document_no: field (5) — the printed document number only (without carrier prefix)
+- document_no_stamp: field (5) — any handwritten/stamped secondary number, or null
+- export_references: field (6) — full content
+- consignee: field (3) — full content of Consignee cell (name and address only, WITHOUT email)
+- consignee_email: field (3) — email address from Consignee cell if present, or null
+- forwarding_agent_references: field (7) — full content, or null if empty
+- notify_party: field (4) — full content of Notify Party cell
+- point_and_country_of_origin: field (8) — full content, or null if empty
+- also_notify_party: field (9) — full content, or null if empty
+- pre_carriage_by: field (12) — full content, or null if empty
+- place_of_receipt: field (13) — Place of Receipt
+- ocean_vessel_voy_no: field (14) — Ocean Vessel and Voyage number exactly as printed
+- port_of_loading: field (15) — Port of Loading
+- port_of_discharge: field (16) — Port of Discharge
+- place_of_delivery: field (17) — Place of Delivery
+- container_seal_no: field (18) — ALL lines in this cell as-is (container/type/seal per line, plus Marks)
+- quantity_kind_of_packages: field (19) — full content showing packages per container and total
+- description_of_goods: field (20) — ENTIRE cell content (product, terms, emails, freight notes, count — everything)
+- measurement_gross_weight: field (21) — full content (total and per-container if shown)
+- total_containers_in_words: field (22) — full content
+- declared_value: field (23) — full content, or null if empty
+- freight_and_charges: field (24) — full content including Rate, Prepaid/Collect info
+- waybill_no: field (25) — Waybill number as printed
+- service_type_mode: field (26) — Service Type/Mode
+- number_of_original_waybills: field (27) — as printed (e.g. "NIL (0)")
+- place_and_date_of_issue: field (28) — full content (place and date together)
+- prepaid_at: field (29) — full content, or null if empty
+- collect_at: field (30) — full content, or null if empty
+- exchange_rate_1: field (31) — or null if empty
+- exchange_rate_2: field (32) — or null if empty
+- laden_on_board: field (33) — COMPLETE text (date, vessel, port — everything in that cell)
 
 Return ONLY valid JSON, no markdown fences, no explanation."""
 
@@ -281,7 +335,9 @@ def classify_document(text):
     }
     for k in ['certificate of origin', 'form e', 'preferential tariff', 'acfta', 'origin criteria']:
         if k in t: scores['certificate_of_origin'] += 25
-    for k in ['bill of lading', 'sea waybill', 'b/l no', 'notify party']:
+    for k in ['bill of lading', 'sea waybill', 'b/l no', 'notify party',
+              'port of loading', 'port of discharge', 'laden on board', 'pre-carriage',
+              'ocean vessel', 'place of delivery', 'non-negotiable', 'waybill no']:
         if k in t: scores['bill_of_lading'] += 20
     for k in ['warehouse receipt', 'goods received', 'wh receipt no']:
         if k in t: scores['warehouse_receipt'] += 25
@@ -441,10 +497,132 @@ def cross_verify_document(cur, doc_db_id, doc_type):
     if not related_ids:
         return []  # No related documents in this shipment yet
 
-    # Fields to compare across documents
+    # Fields to compare across documents (includes aliases from different doc types)
     compare_fields = ['supplier_name', 'buyer_name', 'total_amount', 'container_no',
                       'vessel', 'port_of_loading', 'port_of_discharge', 'gross_weight',
-                      'net_weight', 'total_packages', 'currency']
+                      'net_weight', 'total_packages', 'currency', 'bl_number',
+                      'shipper_name', 'consignee_name', 'measurement',
+                      'document_no', 'ocean_vessel_voy_no', 'shipper_exporter', 'consignee',
+                      'container_seal_no']
+
+    # Field aliases: fields that represent the same concept across different doc types
+    # When comparing, also check the aliased field in the related document
+    field_aliases = {
+        'supplier_name': ['shipper_exporter', 'exporter_name'],
+        'shipper_exporter': ['supplier_name', 'exporter_name'],
+        'exporter_name': ['supplier_name', 'shipper_exporter'],
+        'buyer_name': ['consignee', 'consignee_name'],
+        'consignee': ['buyer_name', 'consignee_name'],
+        'consignee_name': ['buyer_name', 'consignee'],
+        'vessel': ['ocean_vessel_voy_no'],
+        'ocean_vessel_voy_no': ['vessel'],
+        'bl_number': ['document_no'],
+        'document_no': ['bl_number'],
+    }
+
+    def normalize_port(val):
+        """Normalize port name: strip country suffix, common variations."""
+        v = val.strip().upper()
+        # Remove country suffixes like ", CHINA", ", VIETNAM"
+        v = re.sub(r',\s*(CHINA|VIETNAM|SINGAPORE|JAPAN|KOREA|THAILAND|MALAYSIA|INDONESIA)$', '', v)
+        # Normalize "HO CHI MINH" variants
+        v = re.sub(r'HO\s*CHI\s*MINH(\s*CITY)?', 'HO CHI MINH CITY', v)
+        return v.strip()
+
+    def normalize_amount(val):
+        """Normalize amount: remove trailing zeros, commas."""
+        v = re.sub(r'[^\d.]', '', val.replace(',', ''))
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+    def normalize_vessel(val):
+        """Normalize vessel: extract vessel name and voyage, ignore carrier code."""
+        v = val.strip().upper()
+        # Remove carrier codes like "/ EVG", "/ EMC" at end
+        v = re.sub(r'\s*/\s*[A-Z]{2,4}\s*$', '', v)
+        # Normalize separators: "EVER CONFORM / 0311-06" → "EVER CONFORM 0311-06"
+        v = re.sub(r'\s*/\s*', ' ', v)
+        # Remove trailing incomplete voyage suffixes (e.g. "0311-06" should match "0311-062S")
+        return v.strip()
+
+    def normalize_name(val):
+        """Normalize company name for comparison: remove punctuation, extra spaces."""
+        v = val.strip().upper()
+        # Remove email parts
+        v = re.sub(r'E-?MAIL\s*:?\s*\S+', '', v)
+        # Remove common punctuation differences
+        v = re.sub(r'[,.]', ' ', v)
+        v = re.sub(r'\s+', ' ', v).strip()
+        return v
+
+    def values_match(fname, my_val, rel_val):
+        """Smart comparison that accounts for format differences across document types."""
+        if not my_val or not rel_val:
+            return True  # Skip if either is empty
+
+        # Amount fields: numeric comparison
+        if fname in ('total_amount',):
+            my_num = normalize_amount(my_val)
+            rel_num = normalize_amount(rel_val)
+            if my_num is not None and rel_num is not None:
+                return abs(my_num - rel_num) < 0.01
+            return my_val.lower() == rel_val.lower()
+
+        # Port fields: normalize before comparing
+        if fname in ('port_of_loading', 'port_of_discharge'):
+            return normalize_port(my_val) == normalize_port(rel_val)
+
+        # Vessel fields: fuzzy match (one contains the other after normalization)
+        if fname in ('vessel', 'ocean_vessel_voy_no'):
+            my_norm = normalize_vessel(my_val)
+            rel_norm = normalize_vessel(rel_val)
+            # Check if one is a prefix/substring of the other
+            if my_norm in rel_norm or rel_norm in my_norm:
+                return True
+            # Also check just the vessel name (first 2 words)
+            my_name = ' '.join(my_norm.split()[:2])
+            rel_name = ' '.join(rel_norm.split()[:2])
+            return my_name == rel_name
+
+        # Container/seal fields: set comparison
+        if fname in ('container_no', 'hs_codes', 'container_seal_no'):
+            my_parts = set(p.strip().lower() for p in re.split(r'[/,;\n]', my_val) if p.strip())
+            rel_parts = set(p.strip().lower() for p in re.split(r'[/,;\n]', rel_val) if p.strip())
+            return my_parts <= rel_parts or rel_parts <= my_parts
+
+        # Package count: numeric only
+        if fname == 'total_packages':
+            my_num = re.sub(r'[^\d]', '', my_val)
+            rel_num = re.sub(r'[^\d]', '', rel_val)
+            return my_num == rel_num
+
+        # Weight/measurement: numeric comparison
+        if fname in ('gross_weight', 'net_weight', 'measurement', 'measurement_gross_weight'):
+            my_num = re.sub(r'[^\d.]', '', my_val.replace(',', ''))
+            rel_num = re.sub(r'[^\d.]', '', rel_val.replace(',', ''))
+            try:
+                return abs(float(my_num) - float(rel_num)) < 0.01
+            except (ValueError, TypeError):
+                return my_val.lower() == rel_val.lower()
+
+        # Name fields: normalize and check containment
+        if fname in ('shipper_name', 'consignee_name', 'supplier_name', 'buyer_name',
+                     'shipper_exporter', 'consignee', 'exporter_name'):
+            my_norm = normalize_name(my_val)
+            rel_norm = normalize_name(rel_val)
+            return my_norm in rel_norm or rel_norm in my_norm
+
+        # BL number: strip carrier prefix if present
+        if fname in ('bl_number', 'document_no'):
+            my_num = re.sub(r'^[A-Z]{4}', '', my_val.strip())
+            rel_num = re.sub(r'^[A-Z]{4}', '', rel_val.strip())
+            return my_num == rel_num or my_val.strip() == rel_val.strip()
+
+        # Default: exact match (case-insensitive)
+        return my_val.lower() == rel_val.lower()
+
     mismatches = []
 
     for rel_id in related_ids:
@@ -457,24 +635,25 @@ def cross_verify_document(cur, doc_db_id, doc_type):
 
         for fname in compare_fields:
             my_val = my_fields.get(fname, '').strip()
+            if not my_val:
+                continue
+
+            # Try direct field match first
             rel_val = rel_fields.get(fname, '').strip()
-            if not my_val or not rel_val:
+
+            # If no direct match, try aliases
+            if not rel_val and fname in field_aliases:
+                for alias in field_aliases[fname]:
+                    rel_val = rel_fields.get(alias, '').strip()
+                    if rel_val:
+                        break
+
+            if not rel_val:
                 continue
-            # Smart comparison for multi-value fields (container_no, hs_codes)
-            if fname in ('container_no', 'hs_codes'):
-                my_parts = set(p.strip().lower() for p in re.split(r'[/,;]', my_val) if p.strip())
-                rel_parts = set(p.strip().lower() for p in re.split(r'[/,;]', rel_val) if p.strip())
-                # If one is a subset of the other, it's not a real mismatch
-                if my_parts <= rel_parts or rel_parts <= my_parts:
-                    continue
-            # Smart comparison for total_packages: ignore unit text ("200 cartons" vs "200")
-            elif fname == 'total_packages':
-                my_num = re.sub(r'[^\d]', '', my_val)
-                rel_num = re.sub(r'[^\d]', '', rel_val)
-                if my_num == rel_num:
-                    continue
-            elif my_val.lower() == rel_val.lower():
+
+            if values_match(fname, my_val, rel_val):
                 continue
+
             mismatches.append({
                 'field': fname,
                 'my_val': my_val,
@@ -516,13 +695,26 @@ def validate_fields(fields_dict, doc_type):
     mandatory = {
         'invoice': ['invoice_number', 'date', 'total_amount', 'supplier_name'],
         'packing_list': ['packing_list_no', 'total_packages'],
-        'bill_of_lading': ['bl_number', 'vessel', 'port_of_loading', 'port_of_discharge'],
+        'bill_of_lading': ['document_no', 'ocean_vessel_voy_no', 'port_of_loading', 'port_of_discharge',
+                           'shipper_exporter', 'consignee', 'container_seal_no'],
         'warehouse_receipt': ['wh_receipt_no', 'date'],
-        'certificate_of_origin': ['co_reference_no', 'supplier_name', 'buyer_name', 'country_of_origin'],
+        'certificate_of_origin': ['co_reference_no', 'country_of_origin'],
+    }
+    # Field aliases for mandatory check: if the primary field is missing, check aliases
+    mandatory_aliases = {
+        'supplier_name': ['exporter_name', 'shipper_exporter'],
+        'buyer_name': ['consignee_name', 'consignee'],
     }
     required = mandatory.get(doc_type, ['date'])
     for field in required:
-        present = bool(fmap.get(field, '').strip())
+        val = fmap.get(field, '').strip()
+        # If primary field missing, check aliases
+        if not val and field in mandatory_aliases:
+            for alias in mandatory_aliases[field]:
+                val = fmap.get(alias, '').strip()
+                if val:
+                    break
+        present = bool(val)
         results.append((f"mandatory_{field}", present,
                         f"{field} is present" if present else f"{field} is MISSING (required for {doc_type})"))
 

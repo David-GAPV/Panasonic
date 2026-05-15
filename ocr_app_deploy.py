@@ -82,49 +82,66 @@ Required keys:
 Return ONLY valid JSON, no markdown fences, no explanation."""
 
 PROMPT_BL = """Extract ALL fields from this Bill of Lading / Sea Waybill document image.
-This is a standard shipping form with numbered fields (1) through (33). Extract every field visible.
-Return a JSON object. Use null if a field is not found.
 
-Required keys:
-- bl_number: field (5) Document No. (the main B/L number, e.g. EGLV142551220956)
-- local_operational_no: field (5) any secondary number shown (e.g. 2N5500918566)
-- shipper_name: field (2) Shipper/Exporter full text
-- consignee_name: field (3) Consignee full name and address
-- notify_party: field (4) Notify Party full name and address
-- also_notify_party: field (9) Also Notify Party
-- export_references: field (6) Export References
-- forwarding_agent_ref: field (7) Forwarding Agent References
-- point_of_origin: field (8) Point and Country of Origin
-- email_contacts: any email addresses visible (comma separated)
-- pre_carriage_by: field (12) Pre-carriage by
-- place_of_receipt: field (13) Place of Receipt / Date
-- vessel: field (14) Ocean Vessel / Voyage (e.g. "EVER CONFORM 0311-062S")
-- port_of_loading: field (15) Port of Loading (city name)
-- port_of_discharge: field (16) Port of Discharge (city name)
-- place_of_delivery: field (17) Place of Delivery
-- onward_inland_routing: field (10) Onward Inland Routing / Export Instructions
-- container_no: field (18) all container numbers comma separated (format XXXX1234567)
-- seal_no: field (18) all seal numbers comma separated
-- marks_and_numbers: field (18) Marks & Numbers
-- total_packages: field (19) Number of Packages with type (e.g. "192 CARTONS")
-- description_of_goods: field (20) Description of Goods
-- gross_weight: field (21) Gross Weight with unit
-- measurement: field (21) Measurement in CBM
-- total_containers_in_words: field (22) Total Number of Containers or Packages in words
-- freight_charges: field (24) Freight & Charges description
-- freight_prepaid: field (24) Prepaid amount if any
-- freight_collect: field (24) Collect amount if any
-- revenue_tons: field (24) Revenue Tons
-- freight_terms: PREPAID or COLLECT
-- exchange_rate: fields (31)(32) Exchange Rate
-- prepaid_at: field (29) Prepaid at
-- collect_at: field (30) Collect at / Destination
-- date_of_issue: field (28) Place and Date of Issue
-- place_of_issue: field (28) Place of issue (city)
-- service_type: field (26) Service Type/Mode (e.g. "FCL/FCL O/O")
-- laden_on_board: field (33) Laden on Board date
-- bl_type: SEA WAYBILL or BILL OF LADING
-- number_of_original_bls: field (27) Number of Original B/Ls
+IMPORTANT LAYOUT CONTEXT:
+This is a PRE-PRINTED TABLE FORM. The form has fixed grid cells with field labels printed in small text
+at the top-left corner of each cell. The actual values are printed/typed INTO the cell area below the label.
+When a value is too long, it wraps to multiple lines but ALL lines within the same cell boundary belong
+to that SINGLE field. Determine which field a line belongs to by checking which cell (bounded by grid lines)
+contains it — look at the column starting from the LEFT edge of that text.
+
+CRITICAL RULES:
+1. Extract the COMPLETE content of each cell exactly as printed — do NOT split a cell's content into multiple fields.
+2. Do NOT add carrier prefixes or modify values. If Document No. shows "142551220956", return exactly that.
+3. Field (18) Container/Seal: return ALL lines in that cell as-is, format: "CONTAINER / TYPE / SEAL" per line.
+4. Field (20) Description of Goods: return the ENTIRE cell content including emails, shipping terms, freight notes — everything in that cell belongs to this one field.
+5. Field (33) Laden on Board: return the COMPLETE text in that cell (date, vessel, port).
+6. If a cell is empty/blank, return null for that field.
+
+The form has numbered fields (2) through (33) arranged in a grid layout:
+- LEFT column: (2) Shipper, (3) Consignee, (4) Notify Party
+- RIGHT column: (5) Document No., (6) Export References, (7) Forwarding Agent, (8) Point of Origin, (9) Also Notify
+- TRANSPORT row: (12) Pre-carriage, (13) Place of Receipt, (14) Vessel, (15) Port of Loading, (16) Port of Discharge, (17) Place of Delivery
+- CARGO TABLE: (18) Container/Seal, (19) Packages, (20) Description, (21) Measurement/Weight
+- FOOTER: (22) Total containers, (23) Declared value, (24) Freight, (25)-(33) Issue details
+
+Return a JSON object. Use null for empty/blank fields.
+
+Required keys (use these EXACT key names):
+- carrier: carrier company name from header/logo (e.g. "EVERGREEN LINE")
+- document_type_label: document type from header (e.g. "SEA WAYBILL - NON-NEGOTIABLE")
+- shipper_exporter: field (2) — full content of Shipper/Exporter cell
+- document_no: field (5) — the printed document number only (without carrier prefix)
+- document_no_stamp: field (5) — any handwritten/stamped secondary number, or null
+- export_references: field (6) — full content
+- consignee: field (3) — full content of Consignee cell (name and address only, WITHOUT email)
+- consignee_email: field (3) — email address from Consignee cell if present, or null
+- forwarding_agent_references: field (7) — full content, or null if empty
+- notify_party: field (4) — full content of Notify Party cell
+- point_and_country_of_origin: field (8) — full content, or null if empty
+- also_notify_party: field (9) — full content, or null if empty
+- pre_carriage_by: field (12) — full content, or null if empty
+- place_of_receipt: field (13) — Place of Receipt
+- ocean_vessel_voy_no: field (14) — Ocean Vessel and Voyage number exactly as printed
+- port_of_loading: field (15) — Port of Loading
+- port_of_discharge: field (16) — Port of Discharge
+- place_of_delivery: field (17) — Place of Delivery
+- container_seal_no: field (18) — ALL lines in this cell as-is (container/type/seal per line, plus Marks)
+- quantity_kind_of_packages: field (19) — full content showing packages per container and total
+- description_of_goods: field (20) — ENTIRE cell content (product, terms, emails, freight notes, count — everything)
+- measurement_gross_weight: field (21) — full content (total and per-container if shown)
+- total_containers_in_words: field (22) — full content
+- declared_value: field (23) — full content, or null if empty
+- freight_and_charges: field (24) — full content including Rate, Prepaid/Collect info
+- waybill_no: field (25) — Waybill number as printed
+- service_type_mode: field (26) — Service Type/Mode
+- number_of_original_waybills: field (27) — as printed (e.g. "NIL (0)")
+- place_and_date_of_issue: field (28) — full content (place and date together)
+- prepaid_at: field (29) — full content, or null if empty
+- collect_at: field (30) — full content, or null if empty
+- exchange_rate_1: field (31) — or null if empty
+- exchange_rate_2: field (32) — or null if empty
+- laden_on_board: field (33) — COMPLETE text (date, vessel, port — everything in that cell)
 
 Return ONLY valid JSON, no markdown fences, no explanation."""
 
@@ -332,7 +349,9 @@ def classify_document(text):
               'asean-china free trade', 'products consigned from', 'origin criteria', 'certifying authority']:
         if k in t: scores['certificate_of_origin'] += 25
     for k in ['bill of lading', 'sea waybill', 'b/l no', 'place of issue',
-              'ocean bill', 'document no', 'pre-carriage', 'onward inland', 'notify party']:
+              'ocean bill', 'document no', 'pre-carriage', 'onward inland', 'notify party',
+              'port of loading', 'port of discharge', 'laden on board',
+              'ocean vessel', 'place of delivery', 'non-negotiable', 'waybill no']:
         if k in t: scores['bill_of_lading'] += 20
     for k in ['warehouse receipt', 'goods received', 'wh receipt no', 'date received',
               'receiving party', 'inspection']:
