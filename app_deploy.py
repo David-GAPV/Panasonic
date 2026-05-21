@@ -1282,6 +1282,23 @@ def api_cross_compare(doc_id):
                        WHERE shipment_ref=%s ORDER BY created_at""", (shipment_ref,))
         all_docs = cur.fetchall()
 
+        # Field alias groups: fields that represent the same concept across doc types
+        alias_groups = [
+            ['supplier_name', 'shipper_exporter', 'exporter_name'],
+            ['buyer_name', 'consignee', 'consignee_name'],
+            ['vessel', 'ocean_vessel_voy_no'],
+            ['bl_number', 'document_no'],
+            ['gross_weight', 'measurement_gross_weight'],
+        ]
+        # Build lookup: field_name -> canonical (first in group)
+        field_to_canonical = {}
+        canonical_to_aliases = {}
+        for group in alias_groups:
+            canonical = group[0]
+            canonical_to_aliases[canonical] = group
+            for f in group:
+                field_to_canonical[f] = canonical
+
         # Build field map for each document
         documents = []
         all_field_names = set()
@@ -1300,10 +1317,18 @@ def api_cross_compare(doc_id):
 
         # Get failed cross-verify checks for this document
         cur.execute("""SELECT check_name, detail FROM validation_results
-                       WHERE document_id=%s AND check_type='cross_verify' AND NOT passed""", (doc['id'],))
+                       WHERE document_id=%s AND check_type='cross_verify' AND NOT passed
+                       AND (accepted IS NULL OR accepted=FALSE)""", (doc['id'],))
         failed_checks = [{"check_name": r['check_name'], "detail": r['detail']} for r in cur.fetchall()]
-        # Extract the field name from check_name (e.g. "xref_port_of_loading" -> "port_of_loading")
+        # Extract the field name from check_name (e.g. "xref_supplier_name" -> "supplier_name")
         failed_fields = [c['check_name'].replace('xref_', '') for c in failed_checks]
+        # Also add canonical versions of failed fields
+        failed_fields_expanded = set(failed_fields)
+        for f in failed_fields:
+            canonical = field_to_canonical.get(f, f)
+            failed_fields_expanded.add(canonical)
+            for alias in canonical_to_aliases.get(canonical, []):
+                failed_fields_expanded.add(alias)
 
         conn.close()
         return jsonify({
@@ -1311,8 +1336,9 @@ def api_cross_compare(doc_id):
             "current_doc_id": doc_id,
             "documents": documents,
             "all_fields": sorted(all_field_names),
-            "failed_fields": failed_fields,
-            "failed_checks": failed_checks
+            "failed_fields": list(failed_fields_expanded),
+            "failed_checks": failed_checks,
+            "alias_groups": alias_groups
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500

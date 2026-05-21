@@ -63,31 +63,84 @@ function showCrossCompare(highlightField) {
 function renderCompareTable(data, highlightField) {
     const docs = data.documents;
     const failedFields = data.failed_fields || [];
+    const aliasGroups = data.alias_groups || [];
+
+    // Build alias lookup: field -> canonical (first in group)
+    const fieldToCanonical = {};
+    const canonicalToAliases = {};
+    aliasGroups.forEach(group => {
+        const canonical = group[0];
+        canonicalToAliases[canonical] = group;
+        group.forEach(f => { fieldToCanonical[f] = canonical; });
+    });
+
+    // Collect all unique field names, then merge aliases into canonical rows
+    const allFieldsRaw = new Set();
+    docs.forEach(d => Object.keys(d.fields).forEach(f => allFieldsRaw.add(f)));
+
+    // Group fields: canonical fields absorb their aliases
+    const canonicalFields = new Set();
+    const standaloneFields = new Set();
+    allFieldsRaw.forEach(f => {
+        if (fieldToCanonical[f]) {
+            canonicalFields.add(fieldToCanonical[f]);
+        } else {
+            standaloneFields.add(f);
+        }
+    });
+
+    // Final sorted list: canonical groups first (by canonical name), then standalone
+    const sortedFields = [...canonicalFields, ...standaloneFields].sort();
+
+    // For each document, resolve a field value: try canonical name first, then aliases
+    function getFieldValue(doc, fieldKey) {
+        if (canonicalToAliases[fieldKey]) {
+            for (const alias of canonicalToAliases[fieldKey]) {
+                if (doc.fields[alias]) return doc.fields[alias];
+            }
+            return null;
+        }
+        return doc.fields[fieldKey] || null;
+    }
+
     // Build header
     let html = '<table style="width:100%;border-collapse:collapse;font-size:13px">';
     html += '<thead><tr>';
-    html += '<th style="padding:10px 12px;text-align:left;min-width:140px;border-bottom:2px solid #333;font-weight:600;color:#333">Field</th>';
+    html += '<th style="padding:10px 12px;text-align:left;min-width:160px;border-bottom:2px solid #333;font-weight:600;color:#333">Field</th>';
     docs.forEach(d => {
         const label = d.doc_type.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
         const current = d.is_current ? ' (current)' : '';
-        html += '<th style="padding:10px 12px;text-align:left;min-width:200px;border-bottom:2px solid #333;font-weight:600;color:#333">'+label+current+'<br><span style="font-size:10px;font-weight:400;color:#666">'+d.doc_id.substring(0,30)+'</span></th>';
+        html += '<th style="padding:10px 12px;text-align:left;min-width:220px;border-bottom:2px solid #333;font-weight:600;color:#333">'+label+current+'<br><span style="font-size:10px;font-weight:400;color:#666">'+d.doc_id.substring(0,35)+'</span></th>';
     });
     html += '</tr></thead><tbody>';
 
-    // Collect all unique field names across all docs
-    const allFields = new Set();
-    docs.forEach(d => Object.keys(d.fields).forEach(f => allFields.add(f)));
-    const sortedFields = [...allFields].sort();
-
     sortedFields.forEach(fname => {
         const isFailed = failedFields.includes(fname);
-        const isHighlight = fname === highlightField;
+        // Also check if the highlight field is an alias of this canonical
+        const isHighlight = fname === highlightField || (fieldToCanonical[highlightField] === fname);
         const textColor = isFailed ? '#d32f2f' : '#333';
+
+        // Build display label: show aliases in parentheses if it's a group
+        let displayLabel = fname.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+        if (canonicalToAliases[fname]) {
+            const usedAliases = [];
+            docs.forEach(d => {
+                canonicalToAliases[fname].forEach(alias => {
+                    if (d.fields[alias] && !usedAliases.includes(alias)) usedAliases.push(alias);
+                });
+            });
+            if (usedAliases.length > 1) {
+                const aliasLabels = usedAliases.map(a => a.replace(/_/g,' ')).join(' / ');
+                displayLabel = aliasLabels.replace(/\b\w/g,c=>c.toUpperCase());
+            }
+        }
+
         html += '<tr style="border-bottom:1px solid #e0e0e0">';
-        html += '<td style="padding:8px 12px;font-weight:500;color:'+textColor+'">'+fname.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())+'</td>';
+        html += '<td style="padding:8px 12px;font-weight:500;color:'+textColor+'">'+displayLabel+'</td>';
         docs.forEach(d => {
-            const val = d.fields[fname] ? d.fields[fname].value : '';
-            const conf = d.fields[fname] ? d.fields[fname].confidence : '';
+            const fieldData = getFieldValue(d, fname);
+            const val = fieldData ? fieldData.value : '';
+            const conf = fieldData ? fieldData.confidence : '';
             html += '<td style="padding:8px 12px;color:'+textColor+'">';
             if (val) {
                 html += val;
