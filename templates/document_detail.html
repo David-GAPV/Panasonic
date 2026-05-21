@@ -9,7 +9,7 @@ nav a{display:inline-block;padding:16px 24px;color:#333;text-decoration:none;bor
 nav a:hover,nav a.active{color:#2D4285;border-bottom-color:#2D4285}
 .container{max-width:1400px;margin:32px auto;padding:0 40px}
 .card{background:#fff;border-radius:4px;box-shadow:0 2px 4px rgba(0,0,0,0.1);margin-bottom:24px}
-.card-header{padding:20px 24px;border-bottom:1px solid #e0e0e0}
+.card-header{padding:20px 24px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center}
 .card-header h2{font-size:20px;font-weight:400;color:#333}
 .card-body{padding:24px}
 table{width:100%;border-collapse:collapse}
@@ -28,44 +28,185 @@ a:hover{text-decoration:underline}
 .btn{display:inline-block;padding:10px 24px;border:none;border-radius:4px;cursor:pointer;font-size:14px;font-weight:500;margin-right:8px;transition:all 0.3s}
 .btn-approve{background:#4caf50;color:#fff}.btn-approve:hover{background:#388e3c}
 .btn-reject{background:#f44336;color:#fff}.btn-reject:hover{background:#d32f2f}
-.two-col{display:grid;grid-template-columns:1fr 1fr;gap:24px}
-input[type=text]{width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:14px}
-input[type=text]:focus{outline:none;border-color:#2D4285}
+.btn-toggle{background:#fff;color:#333;border:1px solid #ccc;padding:6px 14px;font-size:13px;border-radius:4px;cursor:pointer}
+.btn-toggle:hover{background:#f5f5f5}
+
+/* Layout: panel left + main right */
+.layout{display:flex;gap:24px;align-items:flex-start}
+.panel-left{width:420px;min-width:420px;transition:width 0.3s,min-width 0.3s,opacity 0.3s}
+.panel-left.collapsed{width:0;min-width:0;overflow:hidden;opacity:0;padding:0;margin:0}
+.panel-right{flex:1;min-width:0}
+
+/* Extracted fields value input - bigger */
+.field-input{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:4px;font-size:14px;min-height:40px}
+.field-input:focus{outline:none;border-color:#2D4285}
 </style>
+</head><body>
+<header>
+<img src="/static/images/Panasonic_whitetext.jpg" alt="Panasonic">
+<div style="color:#fff;font-size:18px;font-weight:300">IDP System</div>
+</header>
+<nav>
+<a href="/">Dashboard</a>
+{% if user_role in ('admin','reviewer') %}<a href="/review">Review Queue</a>{% endif %}
+<a href="/upload">Upload</a>
+{% if user_role == 'admin' %}<a href="/sap/simulate">SAP Integration</a>{% endif %}
+{% if user_role in ('admin','reviewer') %}<a href="/analytics">Analytics</a>
+<a href="/report">Reports</a>{% endif %}
+<a href="/api/status" target="_blank">Status</a>
+</nav>
+<div class="container">
+<p style="margin-bottom:20px"><a href="/">← Back to Dashboard</a></p>
+
+<!-- Document info card -->
+<div class="card">
+<div class="card-header">
+<div><h2 style="display:inline;margin-right:12px">{{ doc.doc_id }}</h2><span id="status-badge" class="badge badge-{{ doc.status }}">{{ doc.status|replace('_',' ') }}</span></div>
+<div>{% if user_role in ('admin','reviewer') and doc.status in ['flagged','reviewing','extracted'] %}
+<button class="btn btn-approve" onclick="approveDoc('{{ doc.doc_id }}')">Approve & Send to SAP</button>
+<button class="btn btn-reject" onclick="rejectDoc('{{ doc.doc_id }}')">Reject</button>
+{% endif %}
+<a href="/document/{{ doc.doc_id }}/download" class="btn" style="background:#607d8b;color:#fff;text-decoration:none">Download Original</a></div>
+</div>
+<div class="card-body">
+<table style="width:auto;margin-bottom:0">
+<tr><td style="color:#888;padding-right:30px">Type</td><td><strong>{{ doc.doc_type|replace('_',' ')|title }}</strong> ({{ doc.type_confidence }}%)</td></tr>
+<tr><td style="color:#888">Filename</td><td>{{ doc.filename }}</td></tr>
+<tr><td style="color:#888">Shipment Ref</td><td>{{ doc.shipment_ref or '—' }}</td></tr>
+<tr><td style="color:#888">Uploaded by</td><td>{{ doc.uploaded_by or '' }}</td></tr>
+<tr><td style="color:#888">Created</td><td>{{ doc.created_at }}</td></tr>
+</table></div></div>
+
+<!-- Main layout: collapsible left panel + right content -->
+<div class="layout">
+
+<!-- Left panel: Original Document (collapsible) -->
+<div class="panel-left" id="doc-panel">
+<div class="card" style="position:sticky;top:20px">
+<div class="card-header">
+<h2 style="font-size:16px">Original Document</h2>
+<button class="btn-toggle" onclick="togglePanel()" id="panel-toggle-btn">Hide</button>
+</div>
+<div class="card-body" style="text-align:center;padding:16px">
+{% if preview_url %}
+{% if doc.filename and (doc.filename.lower().endswith('.pdf')) %}
+<iframe src="{{ preview_url }}" style="width:100%;height:600px;border:1px solid #e0e0e0;border-radius:4px"></iframe>
+{% elif doc.filename and (doc.filename.lower().endswith('.png') or doc.filename.lower().endswith('.jpg') or doc.filename.lower().endswith('.jpeg') or doc.filename.lower().endswith('.tiff') or doc.filename.lower().endswith('.tif') or doc.filename.lower().endswith('.webp')) %}
+<img src="{{ preview_url }}" style="max-width:100%;max-height:600px;border:1px solid #e0e0e0;border-radius:4px" alt="Document preview">
+{% else %}
+<div style="padding:40px;color:#999">
+<p style="margin-bottom:12px">Preview not available</p>
+<a href="/document/{{ doc.doc_id }}/download" style="padding:8px 20px;background:#2D4285;color:#fff;border-radius:4px;text-decoration:none">Download</a>
+</div>
+{% endif %}
+{% else %}
+<div style="padding:40px;color:#999">
+<p style="margin-bottom:12px">Preview not available</p>
+<a href="/document/{{ doc.doc_id }}/download" style="padding:8px 20px;background:#2D4285;color:#fff;border-radius:4px;text-decoration:none">Download</a>
+</div>
+{% endif %}
+</div></div>
+</div>
+
+<!-- Right panel: Fields + Validation + Audit -->
+<div class="panel-right">
+
+<!-- Show panel button (visible when collapsed) -->
+<button class="btn-toggle" id="show-panel-btn" onclick="togglePanel()" style="display:none;margin-bottom:16px">
+<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-right:4px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+Show Document
+</button>
+
+<!-- Extracted Fields -->
+<div class="card"><div class="card-header"><h2>Extracted Fields</h2></div><div class="card-body">
+{% if fields %}<table><tr><th style="width:180px">Field</th><th>Value</th><th style="width:80px">Confidence</th><th style="width:70px">Reviewed</th></tr>
+{% for f in fields %}<tr>
+<td><strong>{{ f.field_name|replace('_',' ')|title }}</strong></td>
+<td>{% if user_role in ('admin','reviewer') %}<input type="text" class="field-input" id="field_{{ f.id }}" value="{{ f.corrected_value or f.field_value }}" data-orig="{{ f.corrected_value or f.field_value }}" onblur="updateField({{ f.id }})">{% else %}<span style="word-break:break-word">{{ f.corrected_value or f.field_value }}</span>{% endif %}</td>
+<td>{{ f.confidence }}%</td>
+<td>{{ 'Yes' if f.reviewed else 'No' }}</td>
+</tr>{% endfor %}</table>
+{% else %}<p style="color:#999">No fields extracted</p>{% endif %}
+</div></div>
+
+<!-- Validation Results -->
+<div class="card"><div class="card-header"><h2>Validation Results</h2></div><div class="card-body">
+{% if validations %}<table id="validation-table"><tr><th>Check</th><th style="width:90px">Result</th><th>Detail</th>{% if user_role in ('admin','reviewer') %}<th style="width:80px">Action</th>{% endif %}</tr>
+{% for v in validations %}<tr id="vrow_{{ v.id }}"{% if not v.passed and v.check_type == 'cross_verify' and not v.accepted %} class="xref-row" onclick="showCrossCompare('{{ v.check_name|replace('xref_','') }}')" style="cursor:pointer"{% endif %}>
+<td>{{ v.check_name|replace('_',' ')|title }}{% if not v.passed and v.check_type == 'cross_verify' and not v.accepted %} <span style="font-size:11px;color:#2D4285">🔍 compare</span>{% endif %}</td>
+<td>{% if v.passed %}<span style="color:#388e3c;font-weight:500">PASS</span>{% elif v.accepted %}<span style="color:#666;font-weight:500">ACCEPTED</span>{% else %}<span style="color:#d32f2f;font-weight:500">FAIL</span>{% endif %}</td>
+<td style="{% if v.accepted %}color:#999;text-decoration:line-through{% endif %}">{{ v.detail or '' }}</td>
+{% if user_role in ('admin','reviewer') %}<td>{% if not v.passed %}<button id="vbtn_{{ v.id }}" onclick="event.stopPropagation();acceptValidation({{ v.id }})" style="padding:4px 12px;font-size:12px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer;color:#333">{{ 'Undo' if v.accepted else 'Accept' }}</button>{% endif %}</td>{% endif %}
+</tr>{% endfor %}</table>
+{% else %}<table id="validation-table"><tr><td style="color:#999;text-align:center" colspan="4">No validation results</td></tr></table>{% endif %}
+</div></div>
+
+<!-- Audit Trail -->
+<div class="card"><div class="card-header"><h2>Audit Trail</h2></div><div class="card-body">
+<table id="audit-table"><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr>
+{% for a in audit %}<tr>
+<td>{{ a.logged_at.strftime('%d %b %Y %H:%M:%S') if a.logged_at else '' }}</td>
+<td>{{ a.user_id or 'system' }}</td>
+<td>{{ a.action|replace('_',' ') }}</td>
+<td style="max-width:500px;overflow:hidden;text-overflow:ellipsis">{{ a.new_value or '' }}</td>
+</tr>{% else %}<tr><td colspan="4" style="color:#999;text-align:center">No audit entries</td></tr>{% endfor %}
+</table></div></div>
+
+</div><!-- end panel-right -->
+</div><!-- end layout -->
+</div><!-- end container -->
+
+<!-- Cross-Document Comparison Modal -->
+<div id="xref-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.3);z-index:1000;overflow-y:auto">
+<div id="xref-modal-inner" style="max-width:1000px;margin:40px auto;background:#fff;border-radius:4px;border:1px solid #e0e0e0;box-shadow:0 4px 12px rgba(0,0,0,0.15)">
+<div style="padding:16px 24px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center">
+<h2 style="font-size:16px;font-weight:500;color:#333;margin:0">Cross-Document Comparison</h2>
+<button onclick="closeModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#666">&times;</button>
+</div>
+<div id="xref-modal-body" style="padding:24px;overflow-x:auto">
+<p style="color:#999">Loading...</p>
+</div>
+</div>
+</div>
+
 <script>
 function approveDoc(id){if(!confirm('Approve and send to SAP?'))return;fetch('/document/'+id+'/approve',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.message);location.reload()})}
 function rejectDoc(id){const r=prompt('Rejection reason:');if(!r)return;fetch('/document/'+id+'/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:r})}).then(r=>r.json()).then(d=>{alert(d.message);location.reload()})}
 function updateField(fid){const el=document.getElementById('field_'+fid);const v=el.value;if(v===el.dataset.orig)return;fetch('/document/{{doc.doc_id}}/update_field',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({field_id:fid,value:v})}).then(r=>r.json()).then(d=>{if(d.success){el.dataset.orig=v;el.style.borderColor='#4caf50';setTimeout(()=>{el.style.borderColor='#ddd'},1500);if(d.validations&&d.validations.length>0){let html='<tr><th>Check</th><th>Result</th><th>Detail</th></tr>';d.validations.forEach(v=>{html+='<tr><td>'+v.check_name.replace(/_/g,' ')+'</td><td>'+(v.passed?'<span style="color:#388e3c;font-weight:500">PASS</span>':'<span style="color:#d32f2f;font-weight:500">FAIL</span>')+'</td><td>'+(v.detail||'')+'</td></tr>'});const vt=document.getElementById('validation-table');if(vt)vt.innerHTML=html}if(d.audit&&d.audit.length>0){let html='<tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr>';d.audit.forEach(a=>{html+='<tr><td>'+a.time+'</td><td>'+a.user+'</td><td>'+a.action+'</td><td style="max-width:500px;overflow:hidden;text-overflow:ellipsis">'+a.detail+'</td></tr>'});const at=document.getElementById('audit-table');if(at)at.innerHTML=html}if(d.new_status){const sb=document.getElementById('status-badge');if(sb){sb.className='badge badge-'+d.new_status;sb.textContent=d.new_status.replace(/_/g,' ')}}}})}
 
+// Panel toggle
+function togglePanel(){
+    const panel=document.getElementById('doc-panel');
+    const showBtn=document.getElementById('show-panel-btn');
+    if(panel.classList.contains('collapsed')){
+        panel.classList.remove('collapsed');
+        showBtn.style.display='none';
+    } else {
+        panel.classList.add('collapsed');
+        showBtn.style.display='inline-block';
+    }
+}
+
+// Cross-compare modal
 let xrefData = null;
 function showCrossCompare(highlightField) {
     document.getElementById('xref-modal').style.display = 'block';
-    document.getElementById('xref-modal-body').innerHTML = '<p style="color:#999">Loading comparison data...</p>';
-    if (xrefData) {
-        renderCompareTable(xrefData, highlightField);
-        return;
-    }
+    document.getElementById('xref-modal-body').innerHTML = '<p style="color:#999">Loading...</p>';
+    if (xrefData) { renderCompareTable(xrefData, highlightField); return; }
     fetch('/api/cross_compare/{{doc.doc_id}}')
         .then(r => r.json())
         .then(data => {
-            if (data.error) {
-                document.getElementById('xref-modal-body').innerHTML = '<p style="color:#d32f2f">'+data.error+'</p>';
-                return;
-            }
+            if (data.error) { document.getElementById('xref-modal-body').innerHTML = '<p style="color:#d32f2f">'+data.error+'</p>'; return; }
             xrefData = data;
             renderCompareTable(data, highlightField);
         })
-        .catch(e => {
-            document.getElementById('xref-modal-body').innerHTML = '<p style="color:#d32f2f">Error loading data</p>';
-        });
+        .catch(e => { document.getElementById('xref-modal-body').innerHTML = '<p style="color:#d32f2f">Error loading data</p>'; });
 }
 
 function renderCompareTable(data, highlightField) {
     const docs = data.documents;
     const failedFields = data.failed_fields || [];
     const aliasGroups = data.alias_groups || [];
-
-    // Build alias lookup: field -> canonical (first in group)
     const fieldToCanonical = {};
     const canonicalToAliases = {};
     aliasGroups.forEach(group => {
@@ -73,98 +214,69 @@ function renderCompareTable(data, highlightField) {
         canonicalToAliases[canonical] = group;
         group.forEach(f => { fieldToCanonical[f] = canonical; });
     });
-
-    // Collect all unique field names, then merge aliases into canonical rows
     const allFieldsRaw = new Set();
     docs.forEach(d => Object.keys(d.fields).forEach(f => allFieldsRaw.add(f)));
-
-    // Group fields: canonical fields absorb their aliases
     const canonicalFields = new Set();
     const standaloneFields = new Set();
     allFieldsRaw.forEach(f => {
-        if (fieldToCanonical[f]) {
-            canonicalFields.add(fieldToCanonical[f]);
-        } else {
-            standaloneFields.add(f);
-        }
+        if (fieldToCanonical[f]) canonicalFields.add(fieldToCanonical[f]);
+        else standaloneFields.add(f);
     });
-
-    // Final sorted list: canonical groups first (by canonical name), then standalone
     const sortedFields = [...canonicalFields, ...standaloneFields].sort();
-
-    // For each document, resolve a field value: try canonical name first, then aliases
     function getFieldValue(doc, fieldKey) {
         if (canonicalToAliases[fieldKey]) {
-            for (const alias of canonicalToAliases[fieldKey]) {
-                if (doc.fields[alias]) return doc.fields[alias];
-            }
+            for (const alias of canonicalToAliases[fieldKey]) { if (doc.fields[alias]) return doc.fields[alias]; }
             return null;
         }
         return doc.fields[fieldKey] || null;
     }
 
-    // Build header
     let html = '<table style="width:100%;border-collapse:collapse;font-size:13px">';
     html += '<thead><tr>';
     html += '<th style="padding:10px 12px;text-align:left;min-width:160px;border-bottom:2px solid #333;font-weight:600;color:#333">Field</th>';
     docs.forEach(d => {
         const label = d.doc_type.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
-        const current = d.is_current ? ' (current)' : '';
-        html += '<th style="padding:10px 12px;text-align:left;min-width:220px;border-bottom:2px solid #333;font-weight:600;color:#333">'+label+current+'<br><span style="font-size:10px;font-weight:400;color:#666">'+d.doc_id.substring(0,35)+'</span></th>';
+        html += '<th style="padding:10px 12px;text-align:left;min-width:220px;border-bottom:2px solid #333;font-weight:600;color:#333">';
+        html += '<a href="/document/'+d.doc_id+'" style="color:#2D4285;text-decoration:underline">'+label+'</a>';
+        html += '<br><a href="/document/'+d.doc_id+'" style="font-size:10px;font-weight:400;color:#666">'+d.doc_id+'</a>';
+        if (d.is_current) html += ' <span style="font-size:10px;color:#999">(current)</span>';
+        html += '</th>';
     });
     html += '</tr></thead><tbody>';
 
     sortedFields.forEach(fname => {
         const isFailed = failedFields.includes(fname);
-        // Also check if the highlight field is an alias of this canonical
         const isHighlight = fname === highlightField || (fieldToCanonical[highlightField] === fname);
         const textColor = isFailed ? '#d32f2f' : '#333';
-
-        // Build display label: show aliases in parentheses if it's a group
         let displayLabel = fname.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
         if (canonicalToAliases[fname]) {
             const usedAliases = [];
-            docs.forEach(d => {
-                canonicalToAliases[fname].forEach(alias => {
-                    if (d.fields[alias] && !usedAliases.includes(alias)) usedAliases.push(alias);
-                });
-            });
-            if (usedAliases.length > 1) {
-                const aliasLabels = usedAliases.map(a => a.replace(/_/g,' ')).join(' / ');
-                displayLabel = aliasLabels.replace(/\b\w/g,c=>c.toUpperCase());
-            }
+            docs.forEach(d => { canonicalToAliases[fname].forEach(alias => { if (d.fields[alias] && !usedAliases.includes(alias)) usedAliases.push(alias); }); });
+            if (usedAliases.length > 1) displayLabel = usedAliases.map(a => a.replace(/_/g,' ')).join(' / ').replace(/\b\w/g,c=>c.toUpperCase());
         }
-
         html += '<tr style="border-bottom:1px solid #e0e0e0">';
         html += '<td style="padding:8px 12px;font-weight:500;color:'+textColor+'">'+displayLabel+'</td>';
         docs.forEach(d => {
             const fieldData = getFieldValue(d, fname);
             const val = fieldData ? fieldData.value : '';
             const conf = fieldData ? fieldData.confidence : '';
-            html += '<td style="padding:8px 12px;color:'+textColor+'">';
-            if (val) {
-                html += val;
-                if (conf) html += ' <span style="font-size:10px;color:#999">('+conf+'%)</span>';
-            } else {
-                html += '<span style="color:#ccc">—</span>';
-            }
+            html += '<td style="padding:8px 12px;color:'+textColor+';word-break:break-word">';
+            if (val) { html += val; if (conf) html += ' <span style="font-size:10px;color:#999">('+conf+'%)</span>'; }
+            else html += '<span style="color:#ccc">—</span>';
             html += '</td>';
         });
         html += '</tr>';
     });
     html += '</tbody></table>';
-    html += '<p style="margin-top:16px;font-size:12px;color:#666">Shipment: <strong>'+data.shipment_ref+'</strong> &nbsp;|&nbsp; <span style="color:#d32f2f">Red text</span> = mismatch detected</p>';
+    html += '<p style="margin-top:16px;font-size:12px;color:#666">Shipment: <strong>'+data.shipment_ref+'</strong> &nbsp;|&nbsp; <span style="color:#d32f2f">Red text</span> = mismatch &nbsp;|&nbsp; Click document name to open</p>';
     document.getElementById('xref-modal-body').innerHTML = html;
 }
 
-function closeModal() {
-    document.getElementById('xref-modal').style.display = 'none';
-}
+function closeModal() { document.getElementById('xref-modal').style.display = 'none'; }
 
 function acceptValidation(vid) {
     fetch('/document/{{doc.doc_id}}/accept_validation', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
+        method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({validation_id: vid})
     }).then(r => r.json()).then(d => {
         if (d.success) {
@@ -175,124 +287,20 @@ function acceptValidation(vid) {
                 row.querySelector('td:nth-child(2)').innerHTML = '<span style="color:#666;font-weight:500">ACCEPTED</span>';
                 row.querySelector('td:nth-child(3)').style.color = '#999';
                 row.querySelector('td:nth-child(3)').style.textDecoration = 'line-through';
-                row.style.cursor = 'default';
-                row.onclick = null;
+                row.style.cursor = 'default'; row.onclick = null;
             } else {
                 btn.textContent = 'Accept';
                 row.querySelector('td:nth-child(2)').innerHTML = '<span style="color:#d32f2f;font-weight:500">FAIL</span>';
                 row.querySelector('td:nth-child(3)').style.color = '';
                 row.querySelector('td:nth-child(3)').style.textDecoration = '';
             }
-            if (d.new_status) {
-                const sb = document.getElementById('status-badge');
-                if (sb) { sb.className = 'badge badge-' + d.new_status; sb.textContent = d.new_status.replace(/_/g, ' '); }
-            }
-        } else {
-            alert(d.error || 'Failed');
-        }
+            if (d.new_status) { const sb = document.getElementById('status-badge'); if (sb) { sb.className = 'badge badge-' + d.new_status; sb.textContent = d.new_status.replace(/_/g, ' '); } }
+        } else { alert(d.error || 'Failed'); }
     });
 }
 
-document.getElementById('xref-modal').addEventListener('click', function(e) {
-    if (e.target === this) closeModal();
-});
+// Modal: close on click outside or Escape
+document.getElementById('xref-modal').addEventListener('click', function(e) { if (e.target === this) closeModal(); });
 document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeModal(); });
 </script>
-</head><body>
-<header>
-<img src="/static/images/Panasonic_whitetext.jpg" alt="Panasonic">
-<div style="color:#fff;font-size:18px;font-weight:300">IDP System</div>
-</header>
-<nav>
-<a href="/" >Dashboard</a>
-{% if user_role in ('admin','reviewer') %}<a href="/review" >Review Queue</a>{% endif %}
-<a href="/upload" >Upload</a>
-{% if user_role == 'admin' %}<a href="/sap/simulate" >SAP Integration</a>{% endif %}
-{% if user_role in ('admin','reviewer') %}<a href="/analytics" >Analytics</a>
-<a href="/report" >Reports</a>{% endif %}
-<a href="/api/status" target="_blank">Status</a>
-</nav>
-<div class="container">
-<p style="margin-bottom:20px"><a href="/">Back to Dashboard</a></p>
-<div class="card">
-<div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
-<div><h2 style="display:inline;margin-right:12px">{{ doc.doc_id }}</h2><span id="status-badge" class="badge badge-{{ doc.status }}">{{ doc.status|replace('_',' ') }}</span></div>
-<div>{% if user_role in ('admin','reviewer') and doc.status in ['flagged','reviewing','extracted'] %}
-<button class="btn btn-approve" onclick="approveDoc('{{ doc.doc_id }}')">Approve & Send to SAP</button>
-<button class="btn btn-reject" onclick="rejectDoc('{{ doc.doc_id }}')">Reject</button>
-{% endif %}
-<a href="/document/{{ doc.doc_id }}/download" class="btn" style="background:#607d8b;color:#fff;text-decoration:none">Download Original</a></div>
-</div>
-<div class="card-body">
-<table style="width:auto;margin-bottom:20px">
-<tr><td style="color:#888;padding-right:30px">Type</td><td><strong>{{ doc.doc_type|replace('_',' ')|title }}</strong> ({{ doc.type_confidence }}%)</td></tr>
-<tr><td style="color:#888">Filename</td><td>{{ doc.filename }}</td></tr>
-<tr><td style="color:#888">Shipment Ref</td><td>{{ doc.shipment_ref or '—' }}</td></tr>
-<tr><td style="color:#888">Uploaded by</td><td>{{ doc.uploaded_by or '' }}</td></tr>
-<tr><td style="color:#888">Created</td><td>{{ doc.created_at }}</td></tr>
-</table></div></div>
-<div class="two-col">
-<div class="card"><div class="card-header"><h2>Original Document</h2></div><div class="card-body" style="text-align:center;min-height:400px">
-{% if preview_url %}
-{% if doc.filename and (doc.filename.lower().endswith('.pdf')) %}
-<iframe src="{{ preview_url }}" style="width:100%;height:600px;border:1px solid #e0e0e0;border-radius:4px"></iframe>
-{% elif doc.filename and (doc.filename.lower().endswith('.png') or doc.filename.lower().endswith('.jpg') or doc.filename.lower().endswith('.jpeg') or doc.filename.lower().endswith('.tiff') or doc.filename.lower().endswith('.tif') or doc.filename.lower().endswith('.webp')) %}
-<img src="{{ preview_url }}" style="max-width:100%;max-height:600px;border:1px solid #e0e0e0;border-radius:4px" alt="Document preview">
-{% else %}
-<div style="padding:60px;color:#999">
-<p style="font-size:16px;margin-bottom:12px">Preview not available for this file type</p>
-<a href="/document/{{ doc.doc_id }}/download" style="padding:10px 24px;background:#2D4285;color:#fff;border-radius:4px;text-decoration:none">Download to View</a>
-</div>
-{% endif %}
-{% else %}
-<div style="padding:60px;color:#999">
-<p style="font-size:16px;margin-bottom:12px">Preview not available for this file type</p>
-<a href="/document/{{ doc.doc_id }}/download" style="padding:10px 24px;background:#2D4285;color:#fff;border-radius:4px;text-decoration:none">Download to View</a>
-</div>
-{% endif %}
-</div></div>
-<div>
-<div class="card"><div class="card-header"><h2>Extracted Fields</h2></div><div class="card-body">
-{% if fields %}<table><tr><th>Field</th><th>Value</th><th>Confidence</th><th>Reviewed</th></tr>
-{% for f in fields %}<tr>
-<td><strong>{{ f.field_name|replace('_',' ')|title }}</strong></td>
-<td>{% if user_role in ('admin','reviewer') %}<input type="text" id="field_{{ f.id }}" value="{{ f.corrected_value or f.field_value }}" data-orig="{{ f.corrected_value or f.field_value }}" onblur="updateField({{ f.id }})">{% else %}<span>{{ f.corrected_value or f.field_value }}</span>{% endif %}</td>
-<td>{{ f.confidence }}%</td>
-<td>{{ 'Yes' if f.reviewed else 'No' }}</td>
-</tr>{% endfor %}</table>
-{% else %}<p style="color:#999">No fields extracted</p>{% endif %}
-</div></div>
-<div class="card"><div class="card-header"><h2>Validation Results</h2></div><div class="card-body">
-{% if validations %}<table id="validation-table"><tr><th>Check</th><th>Result</th><th>Detail</th>{% if user_role in ('admin','reviewer') %}<th style="width:90px">Action</th>{% endif %}</tr>
-{% for v in validations %}<tr id="vrow_{{ v.id }}"{% if not v.passed and v.check_type == 'cross_verify' and not v.accepted %} class="xref-row" data-field="{{ v.check_name|replace('xref_','')}}" onclick="showCrossCompare('{{ v.check_name|replace('xref_','') }}')" style="cursor:pointer"{% endif %}>
-<td>{{ v.check_name|replace('_',' ')|title }}{% if not v.passed and v.check_type == 'cross_verify' and not v.accepted %} <span style="font-size:11px;color:#2D4285">🔍 compare</span>{% endif %}</td>
-<td>{% if v.passed %}<span style="color:#388e3c;font-weight:500">PASS</span>{% elif v.accepted %}<span style="color:#666;font-weight:500">ACCEPTED</span>{% else %}<span style="color:#d32f2f;font-weight:500">FAIL</span>{% endif %}</td>
-<td style="{% if v.accepted %}color:#999;text-decoration:line-through{% endif %}">{{ v.detail or '' }}</td>
-{% if user_role in ('admin','reviewer') %}<td>{% if not v.passed %}<button id="vbtn_{{ v.id }}" onclick="event.stopPropagation();acceptValidation({{ v.id }})" style="padding:4px 12px;font-size:12px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer;color:#333">{{ 'Undo' if v.accepted else 'Accept' }}</button>{% endif %}</td>{% endif %}
-</tr>{% endfor %}</table>
-{% else %}<table id="validation-table"><tr><td style="color:#999;text-align:center" colspan="4">No validation results</td></tr></table>{% endif %}
-</div></div>
-
-<!-- Cross-Document Comparison Modal -->
-<div id="xref-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.3);z-index:1000;overflow-y:auto">
-<div style="max-width:960px;margin:40px auto;background:#fff;border-radius:4px;border:1px solid #e0e0e0;box-shadow:0 4px 12px rgba(0,0,0,0.15)">
-<div style="padding:16px 24px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center">
-<h2 style="font-size:16px;font-weight:500;color:#333;margin:0">Cross-Document Comparison</h2>
-<button onclick="closeModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#666">&times;</button>
-</div>
-<div id="xref-modal-body" style="padding:24px;overflow-x:auto">
-<p style="color:#999">Loading...</p>
-</div>
-</div>
-</div>
-</div></div>
-<div class="card"><div class="card-header"><h2>Audit Trail</h2></div><div class="card-body">
-<table id="audit-table"><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr>
-{% for a in audit %}<tr>
-<td>{{ a.logged_at.strftime('%d %b %Y %H:%M:%S') if a.logged_at else '' }}</td>
-<td>{{ a.user_id or 'system' }}</td>
-<td>{{ a.action|replace('_',' ') }}</td>
-<td style="max-width:500px;overflow:hidden;text-overflow:ellipsis">{{ a.new_value or '' }}</td>
-</tr>{% else %}<tr><td colspan="4" style="color:#999;text-align:center">No audit entries</td></tr>{% endfor %}
-</table></div></div>
-</div></body></html>
+</body></html>
