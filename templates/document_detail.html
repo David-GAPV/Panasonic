@@ -65,12 +65,12 @@ function renderCompareTable(data, highlightField) {
     const failedFields = data.failed_fields || [];
     // Build header
     let html = '<table style="width:100%;border-collapse:collapse;font-size:13px">';
-    html += '<thead><tr style="background:#2D4285;color:#fff">';
-    html += '<th style="padding:10px 12px;text-align:left;min-width:140px;position:sticky;left:0;background:#2D4285">Field</th>';
+    html += '<thead><tr>';
+    html += '<th style="padding:10px 12px;text-align:left;min-width:140px;border-bottom:2px solid #333;font-weight:600;color:#333">Field</th>';
     docs.forEach(d => {
-        const isCurrent = d.is_current;
         const label = d.doc_type.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
-        html += '<th style="padding:10px 12px;text-align:left;min-width:200px;'+(isCurrent?'background:#1a237e':'')+'">'+label+'<br><span style="font-size:10px;opacity:0.8">'+d.doc_id.substring(0,30)+'</span></th>';
+        const current = d.is_current ? ' (current)' : '';
+        html += '<th style="padding:10px 12px;text-align:left;min-width:200px;border-bottom:2px solid #333;font-weight:600;color:#333">'+label+current+'<br><span style="font-size:10px;font-weight:400;color:#666">'+d.doc_id.substring(0,30)+'</span></th>';
     });
     html += '</tr></thead><tbody>';
 
@@ -82,19 +82,15 @@ function renderCompareTable(data, highlightField) {
     sortedFields.forEach(fname => {
         const isFailed = failedFields.includes(fname);
         const isHighlight = fname === highlightField;
-        const rowBg = isHighlight ? '#fff3e0' : (isFailed ? '#fff8f8' : '');
-        const rowBorder = isHighlight ? '2px solid #f57c00' : (isFailed ? '1px solid #ffcdd2' : '1px solid #f0f0f0');
-        html += '<tr style="background:'+rowBg+';border-bottom:'+rowBorder+'">';
-        html += '<td style="padding:8px 12px;font-weight:500;color:'+(isFailed?'#d32f2f':'#333')+';position:sticky;left:0;background:'+(isHighlight?'#fff3e0':(isFailed?'#fff8f8':'#fff'))+'">'+fname.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
-        if (isFailed) html += ' <span style="color:#d32f2f;font-size:10px">⚠ MISMATCH</span>';
-        html += '</td>';
+        const textColor = isFailed ? '#d32f2f' : '#333';
+        html += '<tr style="border-bottom:1px solid #e0e0e0">';
+        html += '<td style="padding:8px 12px;font-weight:500;color:'+textColor+'">'+fname.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())+'</td>';
         docs.forEach(d => {
             const val = d.fields[fname] ? d.fields[fname].value : '';
             const conf = d.fields[fname] ? d.fields[fname].confidence : '';
-            const cellBg = d.is_current && isHighlight ? '#ffe0b2' : '';
-            html += '<td style="padding:8px 12px;'+(cellBg?'background:'+cellBg+';':'')+'">';
+            html += '<td style="padding:8px 12px;color:'+textColor+'">';
             if (val) {
-                html += '<span style="'+(isFailed && val?'font-weight:500':'')+'">'+val+'</span>';
+                html += val;
                 if (conf) html += ' <span style="font-size:10px;color:#999">('+conf+'%)</span>';
             } else {
                 html += '<span style="color:#ccc">—</span>';
@@ -104,7 +100,7 @@ function renderCompareTable(data, highlightField) {
         html += '</tr>';
     });
     html += '</tbody></table>';
-    html += '<p style="margin-top:16px;font-size:12px;color:#666">Shipment: <strong>'+data.shipment_ref+'</strong> &nbsp;|&nbsp; Orange = clicked field &nbsp;|&nbsp; Red = mismatch detected</p>';
+    html += '<p style="margin-top:16px;font-size:12px;color:#666">Shipment: <strong>'+data.shipment_ref+'</strong> &nbsp;|&nbsp; <span style="color:#d32f2f">Red text</span> = mismatch detected</p>';
     document.getElementById('xref-modal-body').innerHTML = html;
 }
 
@@ -191,11 +187,11 @@ document.addEventListener('keydown', function(e) { if (e.key === 'Escape') close
 </div></div>
 
 <!-- Cross-Document Comparison Modal -->
-<div id="xref-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;overflow-y:auto">
-<div style="max-width:900px;margin:40px auto;background:#fff;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
-<div style="padding:20px 24px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center">
-<h2 style="font-size:18px;color:#2D4285;margin:0">Cross-Document Comparison</h2>
-<button onclick="closeModal()" style="background:none;border:none;font-size:24px;cursor:pointer;color:#666">&times;</button>
+<div id="xref-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.3);z-index:1000;overflow-y:auto">
+<div style="max-width:960px;margin:40px auto;background:#fff;border-radius:4px;border:1px solid #e0e0e0;box-shadow:0 4px 12px rgba(0,0,0,0.15)">
+<div style="padding:16px 24px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center">
+<h2 style="font-size:16px;font-weight:500;color:#333;margin:0">Cross-Document Comparison</h2>
+<button onclick="closeModal()" style="background:none;border:none;font-size:20px;cursor:pointer;color:#666">&times;</button>
 </div>
 <div id="xref-modal-body" style="padding:24px;overflow-x:auto">
 <p style="color:#999">Loading...</p>
