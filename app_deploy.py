@@ -1131,8 +1131,8 @@ def update_field(doc_id):
                         (doc_db_id, 'reference', check_name, passed, detail))
                 # Cross-document verification
                 xref_results = cross_verify_document(cur, doc_db_id, doc_type)
-                # Check total failures and update status
-                cur.execute("SELECT COUNT(*) as c FROM validation_results WHERE document_id=%s AND NOT passed", (doc_db_id,))
+                # Check total failures (excluding accepted) and update status
+                cur.execute("SELECT COUNT(*) as c FROM validation_results WHERE document_id=%s AND NOT passed AND (accepted IS NULL OR accepted=FALSE)", (doc_db_id,))
                 total_failures = cur.fetchone()['c']
                 if total_failures == 0 and doc_row['status'] == 'flagged':
                     cur.execute("UPDATE documents SET status='extracted' WHERE id=%s", (doc_db_id,))
@@ -1159,6 +1159,61 @@ def update_field(doc_id):
         return jsonify(resp)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/document/<doc_id>/accept_validation", methods=["POST"])
+@role_required('admin', 'reviewer')
+def accept_validation(doc_id):
+    """Toggle a failed validation rule as 'accepted' — still shown but not counted as an issue."""
+    try:
+        data = request.get_json()
+        validation_id = data.get('validation_id')
+        if not validation_id:
+            return jsonify({"error": "validation_id required"}), 400
+
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # Check if 'accepted' column exists, add it if not
+        cur.execute("""SELECT column_name FROM information_schema.columns
+                       WHERE table_name='validation_results' AND column_name='accepted'""")
+        if not cur.fetchone():
+            cur.execute("ALTER TABLE validation_results ADD COLUMN accepted BOOLEAN DEFAULT FALSE")
+
+        # Toggle the accepted state
+        cur.execute("SELECT id, accepted, document_id FROM validation_results WHERE id=%s", (validation_id,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            return jsonify({"error": "Validation result not found"}), 404
+
+        new_accepted = not (row['accepted'] or False)
+        cur.execute("UPDATE validation_results SET accepted=%s WHERE id=%s", (new_accepted, validation_id))
+
+        # Recount failures (excluding accepted ones) and update document status
+        doc_db_id = row['document_id']
+        cur.execute("""SELECT COUNT(*) as c FROM validation_results
+                       WHERE document_id=%s AND NOT passed AND (accepted IS NULL OR accepted=FALSE)""", (doc_db_id,))
+        total_failures = cur.fetchone()['c']
+
+        cur.execute("SELECT status FROM documents WHERE id=%s", (doc_db_id,))
+        doc_row = cur.fetchone()
+        new_status = doc_row['status']
+        if total_failures == 0 and doc_row['status'] == 'flagged':
+            cur.execute("UPDATE documents SET status='extracted' WHERE id=%s", (doc_db_id,))
+            new_status = 'extracted'
+
+        # Audit log
+        action = 'validation_accepted' if new_accepted else 'validation_unaccepted'
+        cur.execute("INSERT INTO audit_log (document_id, user_id, action, new_value) VALUES (%s,%s,%s,%s)",
+                    (doc_db_id, session.get('username', 'unknown'), action, f"Validation #{validation_id}"))
+
+        conn.commit()
+        conn.close()
+        return jsonify({"success": True, "accepted": new_accepted, "new_status": new_status})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 # ============================================================
 # SAP SIMULATION

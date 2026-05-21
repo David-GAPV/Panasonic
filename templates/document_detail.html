@@ -107,6 +107,39 @@ function renderCompareTable(data, highlightField) {
 function closeModal() {
     document.getElementById('xref-modal').style.display = 'none';
 }
+
+function acceptValidation(vid) {
+    fetch('/document/{{doc.doc_id}}/accept_validation', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({validation_id: vid})
+    }).then(r => r.json()).then(d => {
+        if (d.success) {
+            const btn = document.getElementById('vbtn_' + vid);
+            const row = document.getElementById('vrow_' + vid);
+            if (d.accepted) {
+                btn.textContent = 'Undo';
+                row.querySelector('td:nth-child(2)').innerHTML = '<span style="color:#666;font-weight:500">ACCEPTED</span>';
+                row.querySelector('td:nth-child(3)').style.color = '#999';
+                row.querySelector('td:nth-child(3)').style.textDecoration = 'line-through';
+                row.style.cursor = 'default';
+                row.onclick = null;
+            } else {
+                btn.textContent = 'Accept';
+                row.querySelector('td:nth-child(2)').innerHTML = '<span style="color:#d32f2f;font-weight:500">FAIL</span>';
+                row.querySelector('td:nth-child(3)').style.color = '';
+                row.querySelector('td:nth-child(3)').style.textDecoration = '';
+            }
+            if (d.new_status) {
+                const sb = document.getElementById('status-badge');
+                if (sb) { sb.className = 'badge badge-' + d.new_status; sb.textContent = d.new_status.replace(/_/g, ' '); }
+            }
+        } else {
+            alert(d.error || 'Failed');
+        }
+    });
+}
+
 document.getElementById('xref-modal').addEventListener('click', function(e) {
     if (e.target === this) closeModal();
 });
@@ -177,13 +210,14 @@ document.addEventListener('keydown', function(e) { if (e.key === 'Escape') close
 {% else %}<p style="color:#999">No fields extracted</p>{% endif %}
 </div></div>
 <div class="card"><div class="card-header"><h2>Validation Results</h2></div><div class="card-body">
-{% if validations %}<table id="validation-table"><tr><th>Check</th><th>Result</th><th>Detail</th></tr>
-{% for v in validations %}<tr{% if not v.passed and v.check_type == 'cross_verify' %} class="xref-row" data-field="{{ v.check_name|replace('xref_','')}}" onclick="showCrossCompare('{{ v.check_name|replace('xref_','') }}')" style="cursor:pointer"{% endif %}>
-<td>{{ v.check_name|replace('_',' ')|title }}{% if not v.passed and v.check_type == 'cross_verify' %} <span style="font-size:11px;color:#2D4285">🔍 click to compare</span>{% endif %}</td>
-<td>{% if v.passed %}<span style="color:#388e3c;font-weight:500">PASS</span>{% else %}<span style="color:#d32f2f;font-weight:500">FAIL</span>{% endif %}</td>
-<td>{{ v.detail or '' }}</td>
+{% if validations %}<table id="validation-table"><tr><th>Check</th><th>Result</th><th>Detail</th>{% if user_role in ('admin','reviewer') %}<th style="width:90px">Action</th>{% endif %}</tr>
+{% for v in validations %}<tr id="vrow_{{ v.id }}"{% if not v.passed and v.check_type == 'cross_verify' and not v.accepted %} class="xref-row" data-field="{{ v.check_name|replace('xref_','')}}" onclick="showCrossCompare('{{ v.check_name|replace('xref_','') }}')" style="cursor:pointer"{% endif %}>
+<td>{{ v.check_name|replace('_',' ')|title }}{% if not v.passed and v.check_type == 'cross_verify' and not v.accepted %} <span style="font-size:11px;color:#2D4285">🔍 compare</span>{% endif %}</td>
+<td>{% if v.passed %}<span style="color:#388e3c;font-weight:500">PASS</span>{% elif v.accepted %}<span style="color:#666;font-weight:500">ACCEPTED</span>{% else %}<span style="color:#d32f2f;font-weight:500">FAIL</span>{% endif %}</td>
+<td style="{% if v.accepted %}color:#999;text-decoration:line-through{% endif %}">{{ v.detail or '' }}</td>
+{% if user_role in ('admin','reviewer') %}<td>{% if not v.passed %}<button id="vbtn_{{ v.id }}" onclick="event.stopPropagation();acceptValidation({{ v.id }})" style="padding:4px 12px;font-size:12px;border:1px solid #ccc;border-radius:3px;background:#fff;cursor:pointer;color:#333">{{ 'Undo' if v.accepted else 'Accept' }}</button>{% endif %}</td>{% endif %}
 </tr>{% endfor %}</table>
-{% else %}<table id="validation-table"><tr><td style="color:#999;text-align:center" colspan="3">No validation results</td></tr></table>{% endif %}
+{% else %}<table id="validation-table"><tr><td style="color:#999;text-align:center" colspan="4">No validation results</td></tr></table>{% endif %}
 </div></div>
 
 <!-- Cross-Document Comparison Modal -->
