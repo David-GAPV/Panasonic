@@ -1205,6 +1205,63 @@ def sap_simulate():
 # ============================================================
 # API / EXPORT / DOWNLOAD
 # ============================================================
+
+@app.route("/api/cross_compare/<doc_id>")
+@login_required
+def api_cross_compare(doc_id):
+    """Return cross-document comparison data for a given document.
+    Returns all extracted fields from this document and all related documents in the same shipment."""
+    try:
+        conn = get_db()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT id, shipment_ref, doc_type FROM documents WHERE doc_id=%s", (doc_id,))
+        doc = cur.fetchone()
+        if not doc:
+            return jsonify({"error": "Document not found"}), 404
+        shipment_ref = (doc['shipment_ref'] or '').strip()
+        if not shipment_ref:
+            return jsonify({"error": "No shipment reference — cannot compare"}), 400
+
+        # Get all documents in this shipment
+        cur.execute("""SELECT id, doc_id, doc_type, filename FROM documents
+                       WHERE shipment_ref=%s ORDER BY created_at""", (shipment_ref,))
+        all_docs = cur.fetchall()
+
+        # Build field map for each document
+        documents = []
+        all_field_names = set()
+        for d in all_docs:
+            cur.execute("""SELECT field_name, COALESCE(corrected_value, field_value) AS value, confidence
+                           FROM extracted_fields WHERE document_id=%s ORDER BY field_name""", (d['id'],))
+            fields = {r['field_name']: {"value": r['value'], "confidence": r['confidence']} for r in cur.fetchall()}
+            all_field_names.update(fields.keys())
+            documents.append({
+                "doc_id": d['doc_id'],
+                "doc_type": d['doc_type'],
+                "filename": d['filename'],
+                "is_current": d['doc_id'] == doc_id,
+                "fields": fields
+            })
+
+        # Get failed cross-verify checks for this document
+        cur.execute("""SELECT check_name, detail FROM validation_results
+                       WHERE document_id=%s AND check_type='cross_verify' AND NOT passed""", (doc['id'],))
+        failed_checks = [{"check_name": r['check_name'], "detail": r['detail']} for r in cur.fetchall()]
+        # Extract the field name from check_name (e.g. "xref_port_of_loading" -> "port_of_loading")
+        failed_fields = [c['check_name'].replace('xref_', '') for c in failed_checks]
+
+        conn.close()
+        return jsonify({
+            "shipment_ref": shipment_ref,
+            "current_doc_id": doc_id,
+            "documents": documents,
+            "all_fields": sorted(all_field_names),
+            "failed_fields": failed_fields,
+            "failed_checks": failed_checks
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/status")
 def api_status():
     try:

@@ -36,6 +36,85 @@ input[type=text]:focus{outline:none;border-color:#2D4285}
 function approveDoc(id){if(!confirm('Approve and send to SAP?'))return;fetch('/document/'+id+'/approve',{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.message);location.reload()})}
 function rejectDoc(id){const r=prompt('Rejection reason:');if(!r)return;fetch('/document/'+id+'/reject',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:r})}).then(r=>r.json()).then(d=>{alert(d.message);location.reload()})}
 function updateField(fid){const el=document.getElementById('field_'+fid);const v=el.value;if(v===el.dataset.orig)return;fetch('/document/{{doc.doc_id}}/update_field',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({field_id:fid,value:v})}).then(r=>r.json()).then(d=>{if(d.success){el.dataset.orig=v;el.style.borderColor='#4caf50';setTimeout(()=>{el.style.borderColor='#ddd'},1500);if(d.validations&&d.validations.length>0){let html='<tr><th>Check</th><th>Result</th><th>Detail</th></tr>';d.validations.forEach(v=>{html+='<tr><td>'+v.check_name.replace(/_/g,' ')+'</td><td>'+(v.passed?'<span style="color:#388e3c;font-weight:500">PASS</span>':'<span style="color:#d32f2f;font-weight:500">FAIL</span>')+'</td><td>'+(v.detail||'')+'</td></tr>'});const vt=document.getElementById('validation-table');if(vt)vt.innerHTML=html}if(d.audit&&d.audit.length>0){let html='<tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr>';d.audit.forEach(a=>{html+='<tr><td>'+a.time+'</td><td>'+a.user+'</td><td>'+a.action+'</td><td style="max-width:500px;overflow:hidden;text-overflow:ellipsis">'+a.detail+'</td></tr>'});const at=document.getElementById('audit-table');if(at)at.innerHTML=html}if(d.new_status){const sb=document.getElementById('status-badge');if(sb){sb.className='badge badge-'+d.new_status;sb.textContent=d.new_status.replace(/_/g,' ')}}}})}
+
+let xrefData = null;
+function showCrossCompare(highlightField) {
+    document.getElementById('xref-modal').style.display = 'block';
+    document.getElementById('xref-modal-body').innerHTML = '<p style="color:#999">Loading comparison data...</p>';
+    if (xrefData) {
+        renderCompareTable(xrefData, highlightField);
+        return;
+    }
+    fetch('/api/cross_compare/{{doc.doc_id}}')
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('xref-modal-body').innerHTML = '<p style="color:#d32f2f">'+data.error+'</p>';
+                return;
+            }
+            xrefData = data;
+            renderCompareTable(data, highlightField);
+        })
+        .catch(e => {
+            document.getElementById('xref-modal-body').innerHTML = '<p style="color:#d32f2f">Error loading data</p>';
+        });
+}
+
+function renderCompareTable(data, highlightField) {
+    const docs = data.documents;
+    const failedFields = data.failed_fields || [];
+    // Build header
+    let html = '<table style="width:100%;border-collapse:collapse;font-size:13px">';
+    html += '<thead><tr style="background:#2D4285;color:#fff">';
+    html += '<th style="padding:10px 12px;text-align:left;min-width:140px;position:sticky;left:0;background:#2D4285">Field</th>';
+    docs.forEach(d => {
+        const isCurrent = d.is_current;
+        const label = d.doc_type.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+        html += '<th style="padding:10px 12px;text-align:left;min-width:200px;'+(isCurrent?'background:#1a237e':'')+'">'+label+'<br><span style="font-size:10px;opacity:0.8">'+d.doc_id.substring(0,30)+'</span></th>';
+    });
+    html += '</tr></thead><tbody>';
+
+    // Collect all unique field names across all docs
+    const allFields = new Set();
+    docs.forEach(d => Object.keys(d.fields).forEach(f => allFields.add(f)));
+    const sortedFields = [...allFields].sort();
+
+    sortedFields.forEach(fname => {
+        const isFailed = failedFields.includes(fname);
+        const isHighlight = fname === highlightField;
+        const rowBg = isHighlight ? '#fff3e0' : (isFailed ? '#fff8f8' : '');
+        const rowBorder = isHighlight ? '2px solid #f57c00' : (isFailed ? '1px solid #ffcdd2' : '1px solid #f0f0f0');
+        html += '<tr style="background:'+rowBg+';border-bottom:'+rowBorder+'">';
+        html += '<td style="padding:8px 12px;font-weight:500;color:'+(isFailed?'#d32f2f':'#333')+';position:sticky;left:0;background:'+(isHighlight?'#fff3e0':(isFailed?'#fff8f8':'#fff'))+'">'+fname.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+        if (isFailed) html += ' <span style="color:#d32f2f;font-size:10px">⚠ MISMATCH</span>';
+        html += '</td>';
+        docs.forEach(d => {
+            const val = d.fields[fname] ? d.fields[fname].value : '';
+            const conf = d.fields[fname] ? d.fields[fname].confidence : '';
+            const cellBg = d.is_current && isHighlight ? '#ffe0b2' : '';
+            html += '<td style="padding:8px 12px;'+(cellBg?'background:'+cellBg+';':'')+'">';
+            if (val) {
+                html += '<span style="'+(isFailed && val?'font-weight:500':'')+'">'+val+'</span>';
+                if (conf) html += ' <span style="font-size:10px;color:#999">('+conf+'%)</span>';
+            } else {
+                html += '<span style="color:#ccc">—</span>';
+            }
+            html += '</td>';
+        });
+        html += '</tr>';
+    });
+    html += '</tbody></table>';
+    html += '<p style="margin-top:16px;font-size:12px;color:#666">Shipment: <strong>'+data.shipment_ref+'</strong> &nbsp;|&nbsp; Orange = clicked field &nbsp;|&nbsp; Red = mismatch detected</p>';
+    document.getElementById('xref-modal-body').innerHTML = html;
+}
+
+function closeModal() {
+    document.getElementById('xref-modal').style.display = 'none';
+}
+document.getElementById('xref-modal').addEventListener('click', function(e) {
+    if (e.target === this) closeModal();
+});
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeModal(); });
 </script>
 </head><body>
 <header>
@@ -103,13 +182,26 @@ function updateField(fid){const el=document.getElementById('field_'+fid);const v
 </div></div>
 <div class="card"><div class="card-header"><h2>Validation Results</h2></div><div class="card-body">
 {% if validations %}<table id="validation-table"><tr><th>Check</th><th>Result</th><th>Detail</th></tr>
-{% for v in validations %}<tr>
-<td>{{ v.check_name|replace('_',' ')|title }}</td>
+{% for v in validations %}<tr{% if not v.passed and v.check_type == 'cross_verify' %} class="xref-row" data-field="{{ v.check_name|replace('xref_','')}}" onclick="showCrossCompare('{{ v.check_name|replace('xref_','') }}')" style="cursor:pointer"{% endif %}>
+<td>{{ v.check_name|replace('_',' ')|title }}{% if not v.passed and v.check_type == 'cross_verify' %} <span style="font-size:11px;color:#2D4285">🔍 click to compare</span>{% endif %}</td>
 <td>{% if v.passed %}<span style="color:#388e3c;font-weight:500">PASS</span>{% else %}<span style="color:#d32f2f;font-weight:500">FAIL</span>{% endif %}</td>
 <td>{{ v.detail or '' }}</td>
 </tr>{% endfor %}</table>
 {% else %}<table id="validation-table"><tr><td style="color:#999;text-align:center" colspan="3">No validation results</td></tr></table>{% endif %}
 </div></div>
+
+<!-- Cross-Document Comparison Modal -->
+<div id="xref-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;overflow-y:auto">
+<div style="max-width:900px;margin:40px auto;background:#fff;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,0.3)">
+<div style="padding:20px 24px;border-bottom:1px solid #e0e0e0;display:flex;justify-content:space-between;align-items:center">
+<h2 style="font-size:18px;color:#2D4285;margin:0">Cross-Document Comparison</h2>
+<button onclick="closeModal()" style="background:none;border:none;font-size:24px;cursor:pointer;color:#666">&times;</button>
+</div>
+<div id="xref-modal-body" style="padding:24px;overflow-x:auto">
+<p style="color:#999">Loading...</p>
+</div>
+</div>
+</div>
 </div></div>
 <div class="card"><div class="card-header"><h2>Audit Trail</h2></div><div class="card-body">
 <table id="audit-table"><tr><th>Time</th><th>User</th><th>Action</th><th>Detail</th></tr>
